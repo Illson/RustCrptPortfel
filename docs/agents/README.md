@@ -1,0 +1,27 @@
+# Навигатор по задачам
+
+Выбери строку по тому, что видит пользователь. Первая ссылка ведёт к месту, где принимается решение; последняя колонка — к проверке, с которой стоит начать. Команды запуска и проверки находятся в [README проекта](../../README.md), порядок работы и правило пополнения навигатора — в [AGENTS.md](../../AGENTS.md).
+
+## Как данные доходят до экрана
+
+В демо [API](../../src/App.Api/ApiEndpoints.cs) ставит синхронизацию в очередь. [Worker](../../src/App.Worker/Program.cs) забирает задание, а [обработчик](../../src/App.Application/Jobs.cs) применяет [учебный набор](../../src/App.Application/DemoPortfolio.cs) и ставит анализ для новых позиций. API и worker открывают один файл [SQLite](../../src/App.Infrastructure/SqliteWorkspaceStore.cs). React читает результат через [HTTP-клиент](../../frontend/src/lib/api.ts). Поэтому при симптоме «задание принято, но карточек нет» сначала проверь статус задания, запущен ли worker и одинаков ли `Storage__DatabasePath` у обоих процессов.
+
+Личный портфель CMC и платный AI не подключены к этому сценарию. Наличие адаптера и теста с записанным ответом ещё не означает, что интеграция включена: статус и условия подключения описаны в [ревью ТЗ](../review-tz-1.1.md). [CLI](../../src/DotnetCrptPortfel/Program.cs) работает отдельно: читает TSV и не обращается к API или SQLite.
+
+## Куда идти с изменением
+
+| Задача или симптом | Где смотреть и что сохранить | Ближайшая проверка |
+| --- | --- | --- |
+| После синхронизации исчезла позиция | [PortfolioSync](../../src/App.Application/PortfolioSync.cs) собирает страницы, [Workspace.RecordSync](../../src/App.Application/Workspace.cs) принимает снимок. Сбой страницы должен обновить статус попытки и сохранить последний полный состав. | [Сценарии синхронизации](../../tests/App.Tests/Program.cs) |
+| Неверная сумма, доля или качество данных | [PortfolioQueries](../../src/App.Application/PortfolioQueries.cs) выбирает наблюдения на момент оценки; [Metrics](../../src/App.Domain/Metrics.cs) считает потоки, предложение и рынки. Процент без достоверного знаменателя — неизвестное значение, а не ноль. Для точных величин веб-приложение использует [ExactNumber](../../src/App.Domain/ExactNumber.cs). | [DomainChecks](../../tests/App.Tests/DomainChecks.cs) |
+| Источник прислал исправление или повтор события | [Рыночные адаптеры](../../src/App.Infrastructure/PublicMarketSources.cs) разбирают ответ; [PublicSourceRevisions](../../src/App.Application/PublicSources.cs) объединяет наблюдения; [ProjectEvents](../../src/App.Application/ProjectEvents.cs) ведёт версии объявлений. Различай время события и время получения ответа. | [HTTP-контракты](../../tests/App.Tests/ProviderChecks.cs) и [версии событий](../../tests/App.Tests/DomainChecks.cs) |
+| Задание зависло, выполнилось дважды или повторилось после перезапуска | [WorkspaceJobs](../../src/App.Application/Jobs.cs) задаёт переходы статусов, [SqliteWorkspaceStore.ClaimAsync](../../src/App.Infrastructure/SqliteWorkspaceStore.cs) выдаёт задание одному worker. Пустой опрос не должен брать блокировку записи; изменение права на выполнение перепроверяется в транзакции. | [SqliteChecks](../../tests/App.Tests/SqliteChecks.cs) |
+| Меняется AI-анализ или состав данных для провайдера | [AnalysisSnapshots](../../src/App.Application/AnalysisSnapshots.cs) формирует доказательства, [VerifiedAnalysisJob](../../src/App.Application/VerifiedAnalysisJob.cs) проверяет персонализацию и резервирует бюджет перед синтезом. [Входная](../analysis-input-v1.schema.json) и [выходная](../analysis-result-v1.schema.json) схемы используются [валидатором](../../src/App.Domain/AnalysisSchemas.cs). | [Отзыв доступа, отмена и бюджет](../../tests/App.Tests/VerifiedJobChecks.cs); [протоколы провайдеров](../../tests/App.Tests/ProviderChecks.cs) |
+| Меняется карточка, фильтр ленты или HTTP-ответ | Начни с [Feed / PortfolioQueries](../../src/App.Application/PortfolioQueries.cs), затем сверь [маршрут](../../src/App.Api/ApiEndpoints.cs), [OpenAPI](../openapi.json), [тип клиента](../../frontend/src/lib/api.ts) и [экран ленты](../../frontend/src/components/feed.tsx). Представление старой карточки v1 формирует [LegacyFeedJson](../../src/App.Api/LegacyFeedJson.cs); версия маршрута и версия схемы AI — разные контракты. | [Playwright: UI и HTTP](../../frontend/tests/portfolio.spec.ts) |
+| Ошибка в офлайн-отчёте | [Input](../../src/DotnetCrptPortfel/Input.cs) проверяет TSV; [Portfolio](../../src/DotnetCrptPortfel/Portfolio.cs) выбирает котировку; [FixedPoint](../../src/DotnetCrptPortfel/FixedPoint.cs) задаёт масштаб. При отсутствующей или устаревшей цене CLI возвращает частичный итог и код `2`. | [CLI-тесты](../../tests/DotnetCrptPortfel.Tests/Program.cs) и [примеры TSV](../../examples) |
+
+Оба набора .NET-тестов — исполняемые проекты: их запускают через `dotnet run --project`, как в [CI](../../.github/workflows/checks.yml). Для UI-проверок нужны отдельные демоданные, API и worker. Схема запуска трёх сервисов — в [compose.yaml](../../compose.yaml).
+
+## Как оставить полезное дополнение
+
+Пример: при добавлении рыночного источника с иной политикой исправлений опиши эту политику рядом с адаптером, укажи синтетический пример повторного ответа и тест, который отличает исправление от дубля. В строку «Источник прислал исправление» добавь ссылку на это объяснение. Если изменились только внутренние имена и ссылки по-прежнему ведут к ответу, отдельная страница не нужна.
