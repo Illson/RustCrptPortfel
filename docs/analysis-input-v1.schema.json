@@ -6,31 +6,143 @@
   "required": [
     "schema_version",
     "asset_id",
+    "asset",
     "as_of",
+    "snapshot_id",
+    "snapshot_hash",
+    "source_portfolio_id",
     "portfolio_hash",
-    "evidence",
+    "portfolio_context",
+    "blocks",
+    "entity_links",
+    "events",
+    "gaps",
+    "changes_since_previous",
+    "previous_analysis_id",
+    "previous_analysis_hash",
+    "investment_profile",
+    "evidence_registry",
     "research",
     "demo"
   ],
   "properties": {
     "schema_version": {
       "enum": [
-        "v1"
+        "1.0"
       ]
     },
     "asset_id": {
       "type": "string"
     },
-    "as_of": {
-      "type": "string"
+    "asset": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["id", "name", "symbol", "spot", "identifiers"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "symbol": { "type": "string" },
+        "spot": { "type": "boolean" },
+        "identifiers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["provider", "external_id", "chain", "contract"],
+            "properties": {
+              "provider": { "type": "string" },
+              "external_id": { "type": "string" },
+              "chain": { "type": ["string", "null"] },
+              "contract": { "type": ["string", "null"] }
+            }
+          }
+        }
+      }
     },
+    "as_of": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "snapshot_id": { "type": "string", "format": "uuid" },
+    "snapshot_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "source_portfolio_id": { "type": ["string", "null"] },
     "portfolio_hash": {
       "type": [
         "string",
         "null"
       ]
     },
-    "evidence": {
+    "portfolio_context": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["mode", "checked_at", "quantity", "value_usd", "share_pct"],
+      "properties": {
+        "mode": { "const": "current" },
+        "checked_at": { "type": "string", "format": "date-time" },
+        "quantity": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$" },
+        "value_usd": { "$ref": "#/$defs/nullable_decimal" },
+        "share_pct": { "$ref": "#/$defs/nullable_decimal" }
+      }
+    },
+    "blocks": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["block", "data_status", "evidence_ids"],
+        "properties": {
+          "block": { "enum": ["economics", "supply", "markets", "project"] },
+          "data_status": { "$ref": "#/$defs/quality" },
+          "evidence_ids": { "$ref": "#/$defs/string_array" }
+        }
+      }
+    },
+    "entity_links": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["asset_id", "entity_id", "status", "source_id"],
+        "properties": {
+          "asset_id": { "type": "string" },
+          "entity_id": { "type": "string" },
+          "status": { "const": "confirmed" },
+          "source_id": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "asset_id", "title", "announced_at", "local_date", "event_at", "deadline_at", "timezone",
+          "precision", "status", "source_refs", "requires_user_action", "version"],
+        "properties": {
+          "id": { "type": "string" },
+          "asset_id": { "type": "string" },
+          "title": { "type": "string" },
+          "announced_at": { "type": "string", "format": "date-time" },
+          "local_date": { "type": ["string", "null"], "format": "date" },
+          "event_at": { "type": ["string", "null"], "format": "date-time" },
+          "deadline_at": { "type": ["string", "null"], "format": "date-time" },
+          "timezone": { "type": ["string", "null"] },
+          "precision": { "type": "string" },
+          "status": { "enum": ["announced", "scheduled", "completed", "postponed", "cancelled", "disputed", "unknown"] },
+          "source_refs": { "$ref": "#/$defs/string_array" },
+          "requires_user_action": { "type": "boolean" },
+          "version": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    "gaps": { "$ref": "#/$defs/string_array" },
+    "changes_since_previous": { "$ref": "#/$defs/string_array" },
+    "previous_analysis_id": { "type": ["string", "null"], "format": "uuid" },
+    "previous_analysis_hash": { "type": ["string", "null"] },
+    "investment_profile": { "type": ["string", "null"] },
+    "evidence_registry": {
       "type": "array",
       "items": {
         "type": "object",
@@ -46,7 +158,12 @@
           "value_decimal",
           "unit",
           "period",
-          "scope"
+          "scope",
+          "quality_status",
+          "record_revision",
+          "formula_version",
+          "observation_ids",
+          "primary"
         ],
         "properties": {
           "id": {
@@ -65,7 +182,8 @@
             "type": "string"
           },
           "checked_at": {
-            "type": "string"
+            "type": "string",
+            "format": "date-time"
           },
           "metric_key": {
             "type": [
@@ -101,7 +219,12 @@
               "token",
               null
             ]
-          }
+          },
+          "quality_status": { "$ref": "#/$defs/quality" },
+          "record_revision": { "type": ["string", "null"] },
+          "formula_version": { "type": ["string", "null"] },
+          "observation_ids": { "type": ["array", "null"], "items": { "type": "string" } },
+          "primary": { "type": "boolean" }
         }
       }
     },
@@ -160,5 +283,10 @@
     "demo": {
       "type": "boolean"
     }
+  },
+  "$defs": {
+    "quality": { "enum": ["ok", "partial", "stale", "missing", "not_applicable", "conflict", "error"] },
+    "nullable_decimal": { "type": ["string", "null"], "pattern": "^-?[0-9]+(\\.[0-9]+)?$" },
+    "string_array": { "type": "array", "items": { "type": "string" } }
   }
 }

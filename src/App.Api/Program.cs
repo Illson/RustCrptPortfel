@@ -1,3 +1,4 @@
+using System.Security.Cryptography.X509Certificates;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.DataProtection;
@@ -14,7 +15,9 @@ builder.Services.Configure<JsonOptions>(options =>
 {
     options.SerializerOptions.PropertyNamingPolicy = PortfelJson.Options.PropertyNamingPolicy;
     options.SerializerOptions.Converters.Add(PortfelJson.Options.Converters[0]);
+    options.SerializerOptions.RespectRequiredConstructorParameters = true;
 });
+builder.Services.Configure<RouteHandlerOptions>(options => options.ThrowOnBadRequest = true);
 
 bool local = builder.Environment.IsDevelopment();
 var protection = builder.Services.AddDataProtection().SetApplicationName($"dotnetCrptPortfel:{builder.Environment.EnvironmentName}");
@@ -22,6 +25,10 @@ if (builder.Configuration["Security:KeyDirectory"] is { Length: > 0 } keyDirecto
     protection.PersistKeysToFileSystem(Directory.CreateDirectory(keyDirectory));
 else if (local && builder.Configuration["Demo:DataDirectory"] is { Length: > 0 } demoDirectory)
     protection.PersistKeysToFileSystem(Directory.CreateDirectory(Path.Combine(demoDirectory, "keys")));
+if (builder.Configuration["Security:KeyCertificatePath"] is { Length: > 0 } certificatePath)
+    protection.ProtectKeysWithCertificate(X509CertificateLoader.LoadPkcs12FromFile(certificatePath, builder.Configuration["Security:KeyCertificatePassword"]));
+else if (OperatingSystem.IsWindows())
+    protection.ProtectKeysWithDpapi();
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme).AddCookie(options =>
 {
@@ -43,6 +50,7 @@ builder.Services.AddAuthorizationBuilder().AddPolicy("workspace", policy => poli
 builder.Services.AddAntiforgery(options =>
 {
     options.HeaderName = "X-CSRF-Token";
+    options.SuppressReadingTokenFromFormBody = true;
     options.Cookie.HttpOnly = true;
     options.Cookie.SameSite = SameSiteMode.Strict;
     options.Cookie.SecurePolicy = local ? CookieSecurePolicy.SameAsRequest : CookieSecurePolicy.Always;
@@ -53,6 +61,7 @@ app.Use(async (http, next) =>
 {
     http.Response.Headers["Referrer-Policy"] = "no-referrer";
     http.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    http.Response.Headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'";
     if (http.Request.Path.StartsWithSegments("/api")) http.Response.Headers.CacheControl = "no-store";
     try { await next(http); }
     catch (AppFault fault) when (!http.Response.HasStarted) { await ApiEndpoints.WriteFault(http, fault); }

@@ -1,12 +1,14 @@
-import { BotIcon, CalendarDaysIcon, CableIcon, LayoutListIcon, LogOutIcon, MenuIcon, MoonIcon, SettingsIcon, SunIcon, WalletIcon } from 'lucide-react'
+import { BotIcon, CalendarDaysIcon, CableIcon, LayoutListIcon, LogOutIcon, MoonIcon, SettingsIcon, SunIcon, WalletIcon } from 'lucide-react'
 import { type MouseEvent, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { Alert, AlertDescription, AlertTitle, Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Sheet, SheetContent, SheetDescription, SheetTitle, SheetTrigger, Sidebar } from '@/components/ui/primitives'
+import { Alert, AlertDescription, AlertTitle, Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Sidebar,
+  SidebarContent, SidebarFooter, SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger,
+  useSidebar } from '@/components/ui/primitives'
 import { AssetPage } from '@/components/asset'
 import { Feed } from '@/components/feed'
 import { Calendar, Dashboard } from '@/components/portfolio'
 import { AiPage, SettingsPage, Sources } from '@/components/settings'
-import { Loading, Status, Warning } from '@/components/shared'
+import { Loading, Warning } from '@/components/shared'
 import { request, session, useLoad, type Session, type Settings } from '@/lib/api'
 import './index.css'
 
@@ -50,7 +52,7 @@ function Login({ state, onLogin }: { state: Session; onLogin: () => Promise<void
 
 function Workspace({ onLogout }: { onLogout: () => Promise<void> }) {
   const [path, setPath] = useState(location.pathname)
-  const [open, setOpen] = useState(false)
+  const { isMobile, open, openMobile, setOpenMobile } = useSidebar()
   const [dark, setDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches)
   const [error, setError] = useState('')
   const [override, setOverride] = useState<string | null>(null)
@@ -65,7 +67,7 @@ function Workspace({ onLogout }: { onLogout: () => Promise<void> }) {
   function navigate(next: string) {
     if (next !== path) window.history.pushState({}, '', next)
     setPath(next)
-    setOpen(false)
+    setOpenMobile(false)
     window.scrollTo(0, 0)
   }
   function follow(event: MouseEvent<HTMLAnchorElement>, next: string) {
@@ -81,22 +83,21 @@ function Workspace({ onLogout }: { onLogout: () => Promise<void> }) {
   const matched = path.match(/^\/assets\/(\d+)$/)
   const active = path === '/' || matched ? '/' : path
   const title = navigation.find(item => item.path === active)?.name ?? 'Портфель'
-  const sidebar = <>
-    <div className="border-b px-4 py-4"><Brand /></div>
-    <nav aria-label="Основная навигация" className="grid gap-1 p-3">{navigation.map(({ path: target, name, icon: Icon }) =>
-      <a key={target} href={target} aria-current={active === target ? 'page' : undefined} onClick={event => follow(event, target)}
-        className="flex items-center gap-2.5 rounded-md px-3 py-2 text-sm outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring aria-[current=page]:bg-sidebar-accent aria-[current=page]:font-medium">
-        <Icon aria-hidden className="size-4" />{name}</a>)}</nav>
-    <div className="mt-auto border-t p-3"><Button className="w-full justify-start" variant="ghost" onClick={() => void logout()}><LogOutIcon />Выйти</Button></div>
-  </>
-
-  return <div className="grid min-h-svh md:grid-cols-[15rem_minmax(0,1fr)]">
-    <Sidebar className="sticky top-0 hidden h-svh border-r md:flex">{sidebar}</Sidebar>
-    <div className="min-w-0">
+  return <>
+    <Sidebar>
+      <SidebarHeader className="border-b px-4 py-4"><Brand /></SidebarHeader>
+      <SidebarContent><nav aria-label="Основная навигация"><SidebarMenu>{navigation.map(({ path: target, name, icon: Icon }) =>
+        <SidebarMenuItem key={target}><SidebarMenuButton asChild isActive={active === target}>
+          <a href={target} aria-current={active === target ? 'page' : undefined} onClick={event => follow(event, target)}>
+            <Icon aria-hidden /><span>{name}</span>
+          </a>
+        </SidebarMenuButton></SidebarMenuItem>)}</SidebarMenu></nav></SidebarContent>
+      <SidebarFooter className="border-t"><Button className="w-full justify-start" variant="ghost" onClick={() => void logout()}><LogOutIcon />Выйти</Button></SidebarFooter>
+    </Sidebar>
+    <div className="min-w-0 flex-1">
       <header className="sticky top-0 z-20 flex h-14 items-center justify-between gap-2 border-b bg-background px-4 sm:px-6">
         <div className="flex items-center gap-2.5">
-          <Sheet open={open} onOpenChange={setOpen}><SheetTrigger asChild><Button variant="ghost" size="icon" className="md:hidden" aria-label="Меню"><MenuIcon /></Button></SheetTrigger>
-            <SheetContent><SheetTitle className="sr-only">Меню</SheetTitle><SheetDescription className="sr-only">Разделы приложения</SheetDescription><Sidebar className="w-full">{sidebar}</Sidebar></SheetContent></Sheet>
+          <SidebarTrigger aria-label="Меню" aria-expanded={isMobile ? openMobile : open} />
           <span className="text-sm font-medium">{title}</span>
         </div>
         <div className="flex items-center gap-2"><Badge variant="outline">Демо</Badge><Button size="icon" variant="ghost" aria-label={dark ? 'Светлая тема' : 'Тёмная тема'} onClick={() => setDark(value => !value)}>{dark ? <SunIcon /> : <MoonIcon />}</Button></div>
@@ -109,7 +110,7 @@ function Workspace({ onLogout }: { onLogout: () => Promise<void> }) {
           path === '/ai' ? <AiPage /> : <Dashboard timezone={timezone} navigate={navigate} />}
       </main>
     </div>
-  </div>
+  </>
 }
 
 function App() {
@@ -119,7 +120,7 @@ function App() {
   useEffect(() => { void refresh().catch((failure: Error) => setError(failure.message)) }, [])
   if (error) return <main className="mx-auto grid max-w-md gap-4 p-6"><Brand /><Warning title="Сервер приложения недоступен">{error}</Warning><Button onClick={() => location.reload()}>Повторить</Button></main>
   if (!state) return <main className="mx-auto grid max-w-md gap-4 p-6"><Brand /><Loading /></main>
-  return state.authenticated ? <Workspace onLogout={refresh} /> : <Login state={state} onLogin={refresh} />
+  return state.authenticated ? <SidebarProvider><Workspace onLogout={refresh} /></SidebarProvider> : <Login state={state} onLogin={refresh} />
 }
 
 createRoot(document.getElementById('root')!).render(<App />)

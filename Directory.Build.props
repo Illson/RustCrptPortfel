@@ -5,6 +5,5 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
-    <NuGetLockFilePath Condition="'$(PortfelSqliteVersion)' != '' and '$(PortfelSqliteVersion)' != '11.0.0'">$(MSBuildProjectDirectory)/obj/packages.local.lock.json</NuGetLockFilePath>
   </PropertyGroup>
 </Project>

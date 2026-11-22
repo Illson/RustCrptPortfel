@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -9,22 +10,26 @@ public sealed class WorkspaceJobs(IWorkspaceStore store, TimeProvider clock)
 {
     public static readonly TimeSpan LeaseDuration = TimeSpan.FromSeconds(30);
 
-    public Task<JobReceipt> QueueAsync(string owner, JobKind kind, string? asset, string key, bool demo, CancellationToken cancellationToken)
+    public Task<JobReceipt> QueueAsync(string owner, JobKind kind, string? asset, string key, bool demo, CancellationToken cancellationToken,
+        string? unsupportedBody = null)
     {
         if (key.Length is < 1 or > 128 || !key.All(character => char.IsAsciiLetterOrDigit(character) || character is '_' or '-' or ':'))
             throw new AppFault("invalid_idempotency_key", "Задайте корректный Idempotency-Key.");
 
         return store.UpdateAsync(owner, state =>
         {
-            string fingerprint = PortfelJson.Hash(new { kind, asset });
+            string fingerprint = unsupportedBody is null ? Fingerprint(kind, asset) : PortfelJson.Hash(new { kind, asset, unsupportedBody });
             if (state.Jobs.SingleOrDefault(job => job.IdempotencyKey == key) is { } existing)
             {
                 if (existing.RequestHash != fingerprint) throw new AppFault("idempotency_conflict", "Ключ уже использован для другого запроса.", 409);
                 return (state, PortfolioQueries.Receipt(existing));
             }
 
+            if (unsupportedBody is not null) throw new AppFault("invalid_request", "Эта операция не принимает параметры в теле.");
             if (asset is not null && !state.Assets.Any(item => item.Asset.Id == asset))
                 throw new AppFault("asset_not_found", "Актив не найден.", 404);
+            if (asset is not null && state.Current?.Positions.SingleOrDefault(item => item.AssetId == asset)?.IsSpot == false)
+                throw new AppFault("unsupported_position", "Анализ этой позиции не поддерживается.");
             if (!demo) throw new AppFault("CMC_ACCESS_UNVERIFIED", "Чтение личного портфеля CMC не подтверждено.", 409);
             Job job = new(Guid.NewGuid(), kind, asset, key, fingerprint, JobStatus.Queued, clock.GetUtcNow());
             return (state with { Jobs = [.. state.Jobs, job] }, PortfolioQueries.Receipt(job));
@@ -36,7 +41,10 @@ public sealed class WorkspaceJobs(IWorkspaceStore store, TimeProvider clock)
         {
             Job job = Get(state, id);
             if (job.Status is JobStatus.Queued or JobStatus.RetryWait or JobStatus.Running)
+            {
                 job = job with { Status = JobStatus.Cancelled, Lease = null, LeaseUntil = null, FinishedAt = clock.GetUtcNow() };
+                state = MarkUnsettled(state, job.Id);
+            }
             return (Replace(state, job), PortfolioQueries.Receipt(job));
         }, cancellationToken);
 
@@ -48,12 +56,17 @@ public sealed class WorkspaceJobs(IWorkspaceStore store, TimeProvider clock)
             && !state.Jobs.Any(other => other.Id != item.Id && other.Kind == item.Kind && other.AssetId == item.AssetId
                 && other.Status == JobStatus.Running && other.LeaseUntil > now));
         if (job is null) return (state, null);
+        if (job.Status == JobStatus.Running && state.AiExecutions?.Any(item => item.JobId == job.Id) == true)
+        {
+            state = MarkUnsettled(state, job.Id);
+            return (Replace(state, Finish(job, now, JobStatus.Failed, "outcome_unknown")), null);
+        }
         if (job.Attempt >= 3)
         {
             Job failed = job with { Status = JobStatus.Failed, Lease = null, LeaseUntil = null, BlockReason = "attempts_exhausted", FinishedAt = now };
             return (Replace(state, failed), null);
         }
-        Job started = job with { Status = JobStatus.Running, Lease = Guid.NewGuid(), LeaseUntil = now + LeaseDuration, Attempt = job.Attempt + 1 };
+        Job started = job with { Status = JobStatus.Running, Lease = Guid.NewGuid(), LeaseUntil = now + LeaseDuration, Attempt = job.Attempt + 1, BlockReason = null };
         return (Replace(state, started), started);
     }, cancellationToken);
 
@@ -77,12 +90,12 @@ public sealed class WorkspaceJobs(IWorkspaceStore store, TimeProvider clock)
             {
                 var previous = state.Current?.Positions.Select(position => position.AssetId).ToHashSet(StringComparer.Ordinal) ?? [];
                 state = DemoPortfolio.Sync(state, now);
-                foreach (Position added in state.Current!.Positions.Where(item => !previous.Contains(item.AssetId)))
+                foreach (Position added in state.Current!.Positions.Where(item => item.IsSpot != false && !previous.Contains(item.AssetId)))
                 {
-                    string key = $"initial:{state.Current.Hash}:{added.AssetId}";
+                    string key = $"initial:{PortfelJson.Hash(new { job.Id, added.AssetId })}";
                     if (!state.Jobs.Any(item => item.IdempotencyKey == key))
                         state = state with { Jobs = [.. state.Jobs, new(Guid.NewGuid(), JobKind.AssetAnalysis,
-                            added.AssetId, key, key, JobStatus.Queued, now)] };
+                            added.AssetId, key, Fingerprint(JobKind.AssetAnalysis, added.AssetId), JobStatus.Queued, now)] };
                 }
             }
             else
@@ -102,6 +115,8 @@ public sealed class WorkspaceJobs(IWorkspaceStore store, TimeProvider clock)
         Job job = Get(state, lease.Id);
         DateTimeOffset now = clock.GetUtcNow();
         if (!Owns(job, lease, now)) return (state, false);
+        if (state.AiExecutions?.Any(item => item.JobId == job.Id) == true)
+            return (Replace(MarkUnsettled(state, job.Id), Finish(job, now, JobStatus.Failed, "outcome_unknown")), true);
         Job end = job.Attempt >= 3 ? Finish(job, now, JobStatus.Failed, "internal_error") : job with
         {
             Status = JobStatus.RetryWait,
@@ -112,27 +127,92 @@ public sealed class WorkspaceJobs(IWorkspaceStore store, TimeProvider clock)
         return (Replace(state, end), true);
     }, cancellationToken);
 
-    public static Workspace Publish(Workspace state, string owner, AnalysisInputV1 snapshot, AnalysisResultV1 analysis, DateTimeOffset now)
+    public Task<bool> SaveAnalysisSnapshotAsync(string owner, Job lease, AnalysisInputV1 snapshot, CancellationToken ct) =>
+        store.UpdateAsync(owner, state =>
+        {
+            if (!Owns(Get(state, lease.Id), lease, clock.GetUtcNow()) || lease.AssetId != snapshot.AssetId) return (state, false);
+            return (StoreAnalysisSnapshot(state, snapshot), true);
+        }, ct);
+
+    public Task<bool> FinishAnalysisAsync(string owner, Job lease, AnalysisInputV1? snapshot, AnalysisResultV1? result,
+        JobStatus status, string? reason, CancellationToken ct) => store.UpdateAsync(owner, state =>
     {
-        DateTimeOffset local = TimeZoneInfo.ConvertTime(now, TimeZoneInfo.FindSystemTimeZoneById(state.Settings.Timezone));
-        string key = FormattableString.Invariant($"{owner}:{state.Current?.SourcePortfolioId}:{analysis.AssetId}:{local:yyyy-MM-dd}:daily_analysis");
-        FeedItem? previous = state.Feed.LastOrDefault(item => item.PublishKey == key);
-        if (previous?.Analysis.SnapshotHash == analysis.SnapshotHash) return state;
-        bool current = snapshot.PortfolioHash is not null && snapshot.PortfolioHash == state.Current?.Hash
-            && state.Current.LastCheckedAt.AddHours(1) >= now;
-        if (!current && !snapshot.Demo)
+        ct.ThrowIfCancellationRequested();
+        DateTimeOffset now = clock.GetUtcNow();
+        Job job = Get(state, lease.Id);
+        if (!Owns(job, lease, now)) return (state, false);
+        if (status == JobStatus.Succeeded)
+        {
+            if (snapshot is null || result is null || job.AssetId != snapshot.AssetId || snapshot.Demo
+                || state.AnalysisSnapshots?.Any(item => item.SnapshotId == snapshot.SnapshotId && item.ContentHash == snapshot.SnapshotHash) != true)
+                return (Replace(state, Finish(job, now, JobStatus.Failed, "invalid_snapshot")), false);
+            try { state = Publish(state, owner, snapshot, result, now); }
+            catch (AppFault fault) { return (Replace(state, Finish(job, now, JobStatus.Failed, fault.Code)), false); }
+        }
+        return (Replace(state, Finish(job, now, status, reason)), status == JobStatus.Succeeded);
+    }, ct);
+
+    public static Workspace Publish(Workspace state, string owner, AnalysisInputV1 snapshot, AnalysisResultV1 analysis, DateTimeOffset now,
+        ProjectEvent? trigger = null)
+    {
+        if (snapshot.AsOf > now || AnalysisValidation.Validate(snapshot, analysis) is not null)
+            throw new AppFault("invalid_output", "Результат не прошёл проверку публикации.", 409);
+        if (state.Feed.Any(item => item.Analysis.SnapshotHash == analysis.SnapshotHash)) return state;
+        bool current = snapshot.PortfolioContext is { Mode: "current" } context
+            && snapshot.PortfolioHash is not null && snapshot.PortfolioHash == state.Current?.Hash
+            && context.CheckedAt <= now && now - context.CheckedAt <= TimeSpan.FromHours(1)
+            && PortfolioQueries.CanPersonalize(state, now);
+        if (!current && !snapshot.Demo && (snapshot.PortfolioContext is not null || snapshot.InvestmentProfile is not null))
             throw new AppFault("portfolio_changed", "Состав портфеля изменился после начала анализа.", 409);
-        FeedItem item = new(Guid.NewGuid(), analysis.AssetId, "daily_analysis", key, now, snapshot.AsOf,
+        if (trigger is not null && (trigger.AssetId != snapshot.AssetId || !snapshot.Events.Contains(trigger)))
+            throw new AppFault("invalid_event", "Событие не входит в снимок.", 409);
+
+        DateTimeOffset local = TimeZoneInfo.ConvertTime(snapshot.AsOf, TimeZoneInfo.FindSystemTimeZoneById(state.Settings.Timezone));
+        string? portfolio = snapshot.SourcePortfolioId ?? state.Current?.SourcePortfolioId;
+        string type = trigger is null ? "daily_analysis" : "event_analysis";
+        string key = trigger is null
+            ? PortfelJson.Hash(new { owner, portfolio, analysis.AssetId, Date = DateOnly.FromDateTime(local.DateTime), type })
+            : PortfelJson.Hash(new { owner, portfolio, analysis.AssetId, trigger.Id, trigger.Version, type });
+        FeedItem? previous = state.Feed.Where(item => item.PublishKey == key).MaxBy(item => item.Version);
+        // The pre-review demo used a readable daily key; do not create a second card on upgrade.
+        if (previous is null && snapshot.Demo && trigger is null)
+        {
+            string legacy = FormattableString.Invariant($"{owner}:{portfolio}:{analysis.AssetId}:{local:yyyy-MM-dd}:daily_analysis");
+            previous = state.Feed.Where(item => item.PublishKey == legacy).MaxBy(item => item.Version);
+            if (previous is not null) key = legacy;
+        }
+        if (trigger is not null && previous is not null) return state;
+        FeedItem item = new(Guid.NewGuid(), analysis.AssetId, type, key, now, snapshot.AsOf,
             current ? "current" : "asset_only", analysis, snapshot.Evidence, snapshot.Demo,
-            (previous?.Version ?? 0) + 1, previous?.Id, false);
-        return state with { Feed = [.. state.Feed, item] };
+            (previous?.Version ?? 0) + 1, previous?.Id, false, snapshot.PortfolioHash, snapshot.SnapshotId, snapshot.Asset?.Symbol);
+        return StoreAnalysisSnapshot(state, snapshot) with { Feed = [.. state.Feed, item] };
     }
+
+    private static Workspace StoreAnalysisSnapshot(Workspace state, AnalysisInputV1 snapshot)
+    {
+        string hash = snapshot.SnapshotHash;
+        if (state.AnalysisSnapshots?.SingleOrDefault(item => item.SnapshotId == snapshot.SnapshotId) is { } existing)
+        {
+            if (existing.ContentHash != hash) throw new AppFault("invalid_snapshot", "Содержимое снимка уже зафиксировано.", 409);
+            return state;
+        }
+        return state with { AnalysisSnapshots = [.. state.AnalysisSnapshots ?? [], new(snapshot.SnapshotId, hash,
+            System.Text.Json.JsonSerializer.Serialize(snapshot, PortfelJson.Options), snapshot.AsOf)] };
+    }
+
+    private static Workspace MarkUnsettled(Workspace state, Guid jobId) => state.AiExecutions is null ? state : state with
+    {
+        AiExecutions = state.AiExecutions.Select(item => item.JobId == jobId && item.Status == "reserved"
+            ? item with { Status = "outcome_unknown" } : item).ToArray(),
+    };
 
     public static Job Get(Workspace state, Guid id) => state.Jobs.SingleOrDefault(item => item.Id == id)
         ?? throw new AppFault("job_not_found", "Задание не найдено.", 404);
 
-    private static bool Owns(Job current, Job lease, DateTimeOffset now) =>
-        current.Status == JobStatus.Running && current.Lease == lease.Lease && current.LeaseUntil > now;
+    internal static bool Owns(Job current, Job lease, DateTimeOffset now) =>
+        current.Status == JobStatus.Running && lease.Lease is not null && current.Lease == lease.Lease && current.LeaseUntil > now;
+
+    private static string Fingerprint(JobKind kind, string? asset) => PortfelJson.Hash(new { kind, asset });
 
     private static Job Finish(Job job, DateTimeOffset now, JobStatus status, string? reason = null) => job with
     {
@@ -153,13 +233,18 @@ public sealed class PortfolioWorker(IServiceScopeFactory scopes, DemoSettings de
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (!demo.Enabled) return;
+        DateTimeOffset nextSchedule = DateTimeOffset.MinValue;
         while (!stoppingToken.IsCancellationRequested)
         {
             await using AsyncServiceScope scope = scopes.CreateAsyncScope();
             WorkspaceJobs jobs = scope.ServiceProvider.GetRequiredService<WorkspaceJobs>();
             try
             {
-                await ScheduleAsync(scope.ServiceProvider, jobs, stoppingToken);
+                if (clock.GetUtcNow() >= nextSchedule)
+                {
+                    await ScheduleAsync(scope.ServiceProvider, jobs, stoppingToken);
+                    nextSchedule = clock.GetUtcNow().AddSeconds(30);
+                }
                 Job? job = await jobs.ClaimAsync(DemoPortfolio.Owner, stoppingToken);
                 if (job is not null)
                 {
@@ -185,8 +270,8 @@ public sealed class PortfolioWorker(IServiceScopeFactory scopes, DemoSettings de
         if (!state.Settings.ScheduleEnabled || state.Current is null) return;
         DateTimeOffset now = clock.GetUtcNow();
         DateTimeOffset local = TimeZoneInfo.ConvertTime(now, TimeZoneInfo.FindSystemTimeZoneById(state.Settings.Timezone));
-        if (TimeOnly.FromDateTime(local.DateTime) < TimeOnly.ParseExact(state.Settings.DailyTime, "HH:mm")) return;
-        foreach (Position position in state.Current.Positions)
+        if (TimeOnly.FromDateTime(local.DateTime) < TimeOnly.ParseExact(state.Settings.DailyTime, "HH:mm", CultureInfo.InvariantCulture)) return;
+        foreach (Position position in state.Current.Positions.Where(item => item.IsSpot != false))
         {
             string key = FormattableString.Invariant($"daily:{local:yyyy-MM-dd}:{position.AssetId}");
             if (state.Jobs.All(item => item.IdempotencyKey != key))

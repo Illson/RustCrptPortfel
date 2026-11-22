@@ -21,7 +21,7 @@ public static class Integrations
     [
         new("cmc_identity", "CoinMarketCap · вход", CmcAuth, "Официальный контракт входа для приложения не подтверждён.", "https://coinmarketcap.com/api/documentation/guides/authentication/"),
         new("cmc_portfolio", "CoinMarketCap · портфель", CmcAccess, "Разрешённый канал чтения личного портфеля не подтверждён.", "https://coinmarketcap.com/api/mcp/"),
-        new("cmc_market", "CoinMarketCap · рыночные данные", "authentication_required", "Нужен отдельный ключ рыночного API.", "https://coinmarketcap.com/api/documentation/"),
+        new("cmc_market", "CoinMarketCap · рыночные данные", "not_connected", "Публичные котировки доступны отдельно от входа и портфеля. Сбор рабочих данных отключён.", "https://coinmarketcap.com/api/documentation/pro-api-reference/keyless-public-api/"),
         new("defillama", "DefiLlama", "not_connected", "История сборов и выручки. Покрытие зависит от проекта.", "https://defillama.com/data-definitions"),
         new("defillama_pro", "DefiLlama Pro", "unsupported_by_plan", "Для расписаний выпуска требуется подтверждённый доступ Pro.", "https://api-docs.defillama.com/llms-pro.txt"),
         new("coingecko", "CoinGecko", "not_connected", "Наблюдения по торговым парам и качеству рынка.", "https://docs.coingecko.com/reference/coins-id-tickers"),
@@ -37,10 +37,14 @@ public sealed record Job(Guid Id, JobKind Kind, string? AssetId, string Idempote
 public sealed record JobReceipt(Guid JobId, JobStatus Status, DateTimeOffset CreatedAt, string? BlockReason);
 
 public sealed record AssetData(Asset Asset, AssetEntityLink[] Links, Observation[] Observations, SupplyEvent[] Supply,
-    DateTimeOffset? SupplyCoveredThrough, Market[] Markets, ProjectEvent[] Events, Source[] Sources, string MaximumSupplyKind);
+    DateTimeOffset? SupplyCoveredThrough, Market[] Markets, ProjectEvent[] Events, Source[] Sources, string MaximumSupplyKind,
+    DateTimeOffset? SupplyCoveredFrom = null, bool BurnsCovered = false, SourceRecord[]? SourceRecords = null);
+
+public sealed record PortfolioCheck(DateTimeOffset FetchedAt, string Status, string? SnapshotHash = null);
 
 public sealed record Workspace(PortfolioSnapshot[] Snapshots, AssetData[] Assets, Settings Settings, Job[] Jobs,
-    FeedItem[] Feed, AiConnection[] AiConnections, AiRouteSettings AiRoutes)
+    FeedItem[] Feed, AiConnection[] AiConnections, AiRouteSettings AiRoutes, PortfolioCheck? LatestCheck = null,
+    StoredAnalysis[]? AnalysisSnapshots = null, AiRunEntry[]? AiExecutions = null, FeedReport[]? FeedReports = null)
 {
     public static Workspace Empty => new([], [], Settings.Default, [], [], [], new(null, null, false));
     [JsonIgnore]
@@ -50,9 +54,35 @@ public sealed record Workspace(PortfolioSnapshot[] Snapshots, AssetData[] Assets
     {
         PortfolioSnapshot snapshot = PortfolioSnapshot.Accept(fetch);
         if (Current is { } current && snapshot.LastCheckedAt < current.LastCheckedAt) return this;
-        return this with { Snapshots = Current?.Hash == snapshot.Hash ? [.. Snapshots[..^1], snapshot] : [.. Snapshots, snapshot] };
+        if (Current is { } previous && previous.SourcePortfolioId == snapshot.SourcePortfolioId
+            && previous.SourceAsOf is { } lastSource && snapshot.SourceAsOf < lastSource)
+            return this with { LatestCheck = new(snapshot.LastCheckedAt, "stale_response") };
+        return this with
+        {
+            LatestCheck = new(snapshot.LastCheckedAt, "ok", snapshot.Hash),
+            Snapshots = Current?.Hash == snapshot.Hash ? [.. Snapshots[..^1], snapshot] : [.. Snapshots, snapshot],
+        };
+    }
+
+    public Workspace RecordSync(PortfolioFetch fetch)
+    {
+        if (LatestCheck is { } last && fetch.FetchedAt < last.FetchedAt) return this;
+        try { return Accept(fetch); }
+        catch (InvalidOperationException)
+        {
+            string status = fetch.Status switch
+            {
+                "authentication_required" or "permission_denied" or "rate_limited" or "provider_unavailable"
+                    or "schema_error" or "snapshot_changed" or "portfolio_limit" => fetch.Status,
+                _ => fetch.IsComplete ? "invalid_snapshot" : "incomplete_snapshot",
+            };
+            return this with { LatestCheck = new(fetch.FetchedAt.ToUniversalTime(), status) };
+        }
     }
 }
+
+public sealed record StoredAnalysis(Guid SnapshotId, string ContentHash, string ContentJson, DateTimeOffset AsOf);
+public sealed record FeedReport(Guid Id, Guid FeedItemId, string Reason, DateTimeOffset CreatedAt);
 
 public interface IWorkspaceStore
 {
@@ -73,11 +103,12 @@ public sealed record PortfolioView(string Currency, ExactNumber? TotalUsd, Quali
     string? SourcePortfolioId, DateTimeOffset? LastSyncAt, string SyncStatus, bool Demo, PortfolioPosition[] Positions,
     JobReceipt? LatestJob, ProjectEvent[] UpcomingEvents);
 public sealed record AssetView(Asset Asset, PortfolioPosition? Position, AssetEntityLink[] Links,
-    DateTimeOffset? DataAsOf, string? LastConclusion, FeedItem[] Latest);
-public sealed record FlowSeries(string MetricKey, MetricScope Scope, string Unit, MonthlyFlow[] Months);
+    DateTimeOffset? DataAsOf, string? LastConclusion, FeedItem[] Latest, bool Updating);
+public sealed record FlowSeries(string MetricKey, MetricScope Scope, string Unit, MonthlyFlow[] Months,
+    string EntityId, string? AssetId, string? ChainId, string SourceId, string MethodologyVersion, Change? ThreeMonths);
 public sealed record SupplyView(string MaximumSupplyKind, ExactNumber? MaximumSupply, ExactNumber? TotalSupply,
-    ExactNumber? CirculatingSupply, DateTimeOffset? DataAsOf, SupplyWindow[] Windows, SupplyEvent[] Schedule);
-public sealed record FeedPage(FeedItem[] Items, Guid? NextCursor);
+    ExactNumber? CirculatingSupply, DateTimeOffset? DataAsOf, SupplyWindow[] Windows, SupplyEvent[] Schedule, Quality CirculationStatus);
+public sealed record FeedPage(FeedItem[] Items, Guid? NextCursor, bool Updating);
 
 public sealed class AppFault(string code, string message, int status = 422) : Exception(message)
 {

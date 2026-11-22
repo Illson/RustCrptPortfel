@@ -1,1 +1,7 @@
-<Project Sdk="Microsoft.NET.Sdk" />
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="JsonSchema.Net" Version="[9.7.0]" />
+    <EmbeddedResource Include="../../docs/analysis-result-v1.schema.json" LogicalName="analysis-result-v1.schema.json" />
+    <EmbeddedResource Include="../../docs/analysis-input-v1.schema.json" LogicalName="analysis-input-v1.schema.json" />
+  </ItemGroup>
+</Project>

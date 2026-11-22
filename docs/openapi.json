@@ -273,7 +273,7 @@
         "summary": "Карточка актива",
         "responses": {
           "200": {
-            "description": "Успешный ответ"
+            "description": "Карточка и последние публикации. При updating=true запланирована или выполняется синхронизация либо анализ этого актива."
           },
           "default": {
             "description": "Ошибка",
@@ -629,7 +629,7 @@
         "summary": "Лента",
         "responses": {
           "200": {
-            "description": "Успешный ответ"
+            "description": "Страница items с next_cursor. Флаг updating показывает, что синхронизация или анализ выбранных активов ещё не завершены."
           },
           "default": {
             "description": "Ошибка",
@@ -698,6 +698,27 @@
             "Session": []
           }
         ]
+      }
+    },
+    "/feed/{id}/reports": {
+      "post": {
+        "summary": "Записать замечание к версии карточки (не отправляется вовне)",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+          { "name": "X-CSRF-Token", "in": "header", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "required": ["reason"], "properties": { "reason": { "type": "string", "minLength": 1, "maxLength": 800 } } }
+            }
+          }
+        },
+        "responses": {
+          "204": { "description": "Замечание сохранено" },
+          "default": { "description": "Ошибка", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
       }
     },
     "/feed/{id}/read": {

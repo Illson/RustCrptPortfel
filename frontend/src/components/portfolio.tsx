@@ -1,6 +1,6 @@
 import { ArrowRightIcon, CalendarDaysIcon, ChartNoAxesCombinedIcon, RefreshCwIcon, WalletIcon } from 'lucide-react'
-import { useEffect, useState } from 'react'
-import { date, decimal, dollars, percent, useLoad, type FeedPage, type Portfolio, type Position, type ProjectEvent } from '@/lib/api'
+import { useState } from 'react'
+import { date, decimal, dollars, percent, useLoad, useRefreshWhileUpdating, type FeedPage, type Portfolio, type Position, type ProjectEvent } from '@/lib/api'
 import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/primitives'
 import { Empty, Loaded, RunJob, Status } from './shared'
 
@@ -16,7 +16,10 @@ export function PositionTable({ positions, navigate }: { positions: Position[]; 
       <TableHead className="text-right">Доля</TableHead><TableHead className="pr-5">Данные</TableHead>
     </TableRow></TableHeader>
     <TableBody>{positions.map(position => <TableRow key={position.asset_id}>
-      <TableCell className="pl-5"><a href={`/assets/${position.asset_id}`} onClick={event => { event.preventDefault(); navigate(`/assets/${position.asset_id}`) }} className="flex items-center gap-2.5 font-medium hover:underline">
+      <TableCell className="pl-5"><a href={`/assets/${encodeURIComponent(position.asset_id)}`} onClick={event => {
+        if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return
+        event.preventDefault(); navigate(`/assets/${encodeURIComponent(position.asset_id)}`)
+      }} className="flex items-center gap-2.5 font-medium hover:underline">
         <AssetIcon symbol={position.symbol} /><span>{position.name}<span className="block text-xs font-normal text-muted-foreground">{position.symbol}</span></span>
       </a></TableCell>
       <TableCell className="text-right tabular-nums" title={position.quantity}>{decimal(position.quantity)}</TableCell>
@@ -43,12 +46,7 @@ export function Dashboard({ timezone, navigate }: { timezone: string; navigate: 
   const [revision, setRevision] = useState(0)
   const portfolio = useLoad<Portfolio>('/portfolio', revision)
   const feed = useLoad<FeedPage>('/feed', revision)
-  const waiting = !portfolio.data?.last_sync_at || (feed.data?.items.length ?? 0) === 0
-  useEffect(() => {
-    if (!waiting || portfolio.error) return
-    const timer = window.setInterval(() => setRevision(value => value + 1), 1750)
-    return () => window.clearInterval(timer)
-  }, [waiting, portfolio.error])
+  useRefreshWhileUpdating(feed.data, setRevision)
   const refresh = () => setRevision(value => value + 1)
 
   return <div className="grid gap-6">
@@ -76,7 +74,7 @@ export function Dashboard({ timezone, navigate }: { timezone: string; navigate: 
         <Card><CardHeader className="flex items-start justify-between gap-2"><div className="grid gap-1.5"><CardTitle>Последние публикации</CardTitle><CardDescription>Анализ активов портфеля</CardDescription></div>
           <Button variant="ghost" size="sm" onClick={() => navigate('/feed')}>Лента<ArrowRightIcon /></Button></CardHeader>
         <CardContent><Loaded state={feed}>{page => page.items.length ? <ul className="divide-y">{page.items.slice(0, 3).map(item => <li className="py-3 first:pt-0 last:pb-0" key={item.id}>
-          <button type="button" onClick={() => navigate(`/assets/${item.asset_id}`)} className="text-left text-sm font-medium underline-offset-4 hover:underline">{item.analysis.title}</button>
+          <button type="button" onClick={() => navigate(`/assets/${encodeURIComponent(item.asset_id)}`)} className="text-left text-sm font-medium underline-offset-4 hover:underline">{item.analysis.headline}</button>
           <p className="mt-1 text-xs text-muted-foreground">{date(item.published_at, timezone)}</p>
         </li>)}</ul> : <p className="text-sm text-muted-foreground">Публикации появятся после выполнения заданий.</p>}</Loaded></CardContent></Card>
         <Card><CardHeader className="flex items-start justify-between gap-2"><div className="grid gap-1.5"><CardTitle>Ближайшие события</CardTitle><CardDescription>Объявления и даты из источников</CardDescription></div>

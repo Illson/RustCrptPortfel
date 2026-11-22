@@ -17,15 +17,9 @@ public sealed class InitialWorkspace : Migration
 
     protected override void Down(MigrationBuilder migrationBuilder) => migrationBuilder.DropTable("workspaces");
 
-    protected override void BuildTargetModel(ModelBuilder modelBuilder) => WorkspaceModelSnapshot.Build(modelBuilder);
-}
+    protected override void BuildTargetModel(ModelBuilder modelBuilder) => BuildInitialModel(modelBuilder);
 
-[DbContext(typeof(PortfelDb))]
-public sealed class WorkspaceModelSnapshot : ModelSnapshot
-{
-    protected override void BuildModel(ModelBuilder modelBuilder) => Build(modelBuilder);
-
-    internal static void Build(ModelBuilder modelBuilder)
+    internal static void BuildInitialModel(ModelBuilder modelBuilder)
     {
         modelBuilder.HasAnnotation("ProductVersion", "11.0.0");
         modelBuilder.Entity("Portfel.Infrastructure.WorkspaceRow", entity =>
@@ -36,4 +30,10 @@ public sealed class WorkspaceModelSnapshot : ModelSnapshot
             entity.ToTable("workspaces");
         });
     }
+}
+
+[DbContext(typeof(PortfelDb))]
+public sealed class WorkspaceModelSnapshot : ModelSnapshot
+{
+    protected override void BuildModel(ModelBuilder modelBuilder) => PersistentQueue.BuildQueueModel(modelBuilder);
 }

@@ -1,9 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <PortfelSqliteVersion Condition="'$(PortfelSqliteVersion)' == ''">11.0.0</PortfelSqliteVersion>
-  </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../App.Application/App.Application.csproj" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="[$(PortfelSqliteVersion)]" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="[11.0.0]" />
   </ItemGroup>
 </Project>

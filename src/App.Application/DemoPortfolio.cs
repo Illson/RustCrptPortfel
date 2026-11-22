@@ -25,6 +25,7 @@ public static class DemoPortfolio
         {
             Supply = [new("arb-cliff", arb.Id, SupplyKind.Unlock, now.AddDays(16), null, ExactNumber.From(65000000),
                 "fixture-grant", "Ранние участники", Circulation.Yes, Fixture, "fixture-v1", true)],
+            SupplyCoveredFrom = now,
             SupplyCoveredThrough = now.AddDays(365),
         };
         return state with { Assets = [solData, arbData, Basic(btc, now, "84200.08", "19800000", "finite")] };
@@ -61,6 +62,7 @@ public static class DemoPortfolio
             Observations = [.. observations],
             Supply = [new("sol-linear", asset.Id, SupplyKind.Issuance, today, today.AddDays(366), ExactNumber.From(17500000),
                 "fixture-staking", "Стейкеры", Circulation.Yes, Fixture, "fixture-v1", true)],
+            SupplyCoveredFrom = today,
             SupplyCoveredThrough = today.AddDays(366),
             Markets = [new("sol-fixture-a", "fixture-a", asset.Id, "usd", "SOL/USD", "spot", "CEX", ExactNumber.From(67800000), now.AddMinutes(-5), true, Quality.Ok, Fixture),
                 new("sol-fixture-b", "fixture-b", asset.Id, "usdc", "SOL/USDC", "spot", "DEX", ExactNumber.From(22700000), now.AddMinutes(-10), true, Quality.Ok, Fixture)],
@@ -79,14 +81,18 @@ public static class DemoPortfolio
     {
         AssetData asset = state.Assets.Single(item => item.Asset.Id == assetId);
         var source = new Evidence($"{Fixture}-announcement", assetId, Fixture, FixtureUrl, "Сценарий проверки публикации", now);
-        var snapshot = new AnalysisInputV1("v1", assetId, now, state.Current?.Hash, [source],
-            [new("demo", "fixture", "fixture-search", [], [FixtureUrl], [source.Id], now, true)], true);
+        var snapshot = new AnalysisInputV1(AnalysisValidation.SchemaVersion, assetId, now, state.Current?.Hash, [source],
+            [new(Fixture, "fixture", "fixture-search", [], [FixtureUrl], [source.Id], now, true)], true)
+        {
+            Asset = asset.Asset, SourcePortfolioId = PortfolioId, EntityLinks = asset.Links,
+        };
         AnalysisSection[] sections = Enum.GetValues<AnalysisBlock>().Select(block =>
-            new AnalysisSection(block, block == AnalysisBlock.Development ? Quality.Partial : Quality.Missing,
-                "undetermined", block == AnalysisBlock.Development ? "Набор показывает пример изменения срока события."
-                    : "Демо не формирует вывод о реальных данных проекта.", block == AnalysisBlock.Development ? [source.Id] : [])).ToArray();
-        return (snapshot, new("v1", assetId, snapshot.SnapshotHash, $"{asset.Asset.Symbol} · демонстрационный обзор",
-            "Учебная карточка показывает четыре блока анализа, ссылки на основания и статус покрытия.", "normal", sections,
+            new AnalysisSection(block, block == AnalysisBlock.Project ? Quality.Partial : Quality.Missing,
+                "undetermined", block == AnalysisBlock.Project ? "Набор показывает пример изменения срока события."
+                    : "Демо не формирует вывод о реальных данных проекта.", block == AnalysisBlock.Project ? [source.Id] : [])).ToArray();
+        snapshot = snapshot with { Blocks = sections.Select(section => new AnalysisCoverage(section.Block, section.DataStatus, section.EvidenceIds)).ToArray() };
+        return (snapshot, new(AnalysisValidation.SchemaVersion, assetId, snapshot.SnapshotHash, $"{asset.Asset.Symbol} · демонстрационный обзор",
+            "Учебная карточка показывает четыре блока анализа, ссылки на основания и статус покрытия.", "info", sections,
             [], [new("fixture-fact", "В карточку включён синтетический сценарий проверки источника.", [source.Id], "reported", [])],
             [new("Карточка иллюстрирует обработку неполных данных.", ["fixture-fact"], "Источник учебный.")],
             "Используется демонстрационный состав. Реальная позиция не подключена.",
