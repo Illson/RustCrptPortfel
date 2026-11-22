@@ -38,11 +38,11 @@ export type Settings = { timezone: string; daily_time: string; major_exchange_id
 
 let csrfToken: string | null = null
 
-export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+export async function request<T>(path: string, options: RequestInit = {}, version: 'v1' | 'v2' = 'v1'): Promise<T> {
   const headers = new Headers(options.headers)
   if (options.body !== undefined) headers.set('Content-Type', 'application/json')
   if (options.method && csrfToken) headers.set('X-CSRF-Token', csrfToken)
-  const result = await fetch(`/api/v1${path}`, { ...options, headers, credentials: 'same-origin' })
+  const result = await fetch(`/api/${version}${path}`, { ...options, headers, credentials: 'same-origin' })
   if (!result.ok) {
     const error = (await result.json().catch(() => null)) as { message?: string } | null
     throw new Error(error?.message ?? `Ошибка API (${result.status})`)
@@ -56,16 +56,16 @@ export async function session() {
   return result
 }
 
-export function useLoad<T>(path: string, revision = 0) {
+export function useLoad<T>(path: string, revision = 0, version: 'v1' | 'v2' = 'v1') {
   const [state, setState] = useState<{ path: string; data?: T; error?: string }>({ path })
   useEffect(() => {
     const controller = new AbortController()
-    request<T>(path, { signal: controller.signal }).then(
+    request<T>(path, { signal: controller.signal }, version).then(
       data => { if (!controller.signal.aborted) setState({ path, data }) },
       (error: Error) => { if (!controller.signal.aborted) setState({ path, error: error.message }) },
     )
     return () => controller.abort()
-  }, [path, revision])
+  }, [path, revision, version])
   return state.path === path ? state : { path }
 }
 

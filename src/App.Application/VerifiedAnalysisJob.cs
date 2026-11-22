@@ -27,10 +27,9 @@ public sealed class VerifiedAnalysisJob(IServiceScopeFactory scopes, TimeProvide
             await using (var scope = scopes.CreateAsyncScope())
                 state = await scope.ServiceProvider.GetRequiredService<IWorkspaceStore>().ReadAsync(owner, lifetime.Token);
             var seed = AnalysisSnapshots.ForAsset(state, lease.AssetId, clock.GetUtcNow());
-            var researcher = new GuardedProvider(scopes, clock, owner, lease, research, limits, true);
-            var writer = new GuardedProvider(scopes, clock, owner, lease, synthesis, limits, false);
+            var researcher = new GuardedProvider(scopes, clock, owner, lease, research, limits, null);
 
-            var synthesisCaps = await writer.CapabilitiesAsync(lifetime.Token);
+            var synthesisCaps = await synthesis.Provider.CapabilitiesAsync(lifetime.Token);
             if ((!synthesisCaps.StructuredOutput && !synthesisCaps.JsonOutput) ||
                 (synthesisCaps.Model is { } supportedModel && supportedModel != synthesis.Model) ||
                 !GuardedProvider.IsSelected(state, synthesis, false))
@@ -44,13 +43,7 @@ public sealed class VerifiedAnalysisJob(IServiceScopeFactory scopes, TimeProvide
                 await Complete(null, null, FailureStatus(researched), researched.Failure);
                 return;
             }
-            // Persist exactly the immutable input used by the following inference, including research receipts.
-            await using (var scope = scopes.CreateAsyncScope())
-            {
-                bool saved = await scope.ServiceProvider.GetRequiredService<WorkspaceJobs>()
-                    .SaveAnalysisSnapshotAsync(owner, lease, snapshot, lifetime.Token);
-                if (!saved) return;
-            }
+            var writer = new GuardedProvider(scopes, clock, owner, lease, synthesis, limits, snapshot);
             var (result, synthesized) = await AiAnalysis.SynthesizeAsync(writer, synthesis.Model, snapshot, lifetime.Token);
             if (result is null) await Complete(null, null, FailureStatus(synthesized), synthesized.Failure);
             else await Complete(snapshot, result, JobStatus.Succeeded, null);
@@ -99,7 +92,7 @@ public sealed class VerifiedAnalysisJob(IServiceScopeFactory scopes, TimeProvide
     }
 
     private sealed class GuardedProvider(IServiceScopeFactory scopes, TimeProvider clock, string owner, Job lease,
-        AiRoute route, AiDailyLimits limits, bool research) : IAiProvider
+        AiRoute route, AiDailyLimits limits, AnalysisInputV1? synthesisInput) : IAiProvider
     {
         public string Id => route.Provider.Id;
         public ValueTask<AiCapabilities> CapabilitiesAsync(CancellationToken ct) => route.Provider.CapabilitiesAsync(ct);
@@ -113,19 +106,22 @@ public sealed class VerifiedAnalysisJob(IServiceScopeFactory scopes, TimeProvide
 
         public async Task<AiReceipt> RunAsync(AiRequest request, CancellationToken ct)
         {
+            bool research = synthesisInput is null;
             await using var scope = scopes.CreateAsyncScope();
             var store = scope.ServiceProvider.GetRequiredService<IWorkspaceStore>();
             bool paid = route.BillingMode is "api_usage" or "chatgpt_api_credits";
-            DateTimeOffset now = clock.GetUtcNow();
+            Guid reservationId = Guid.NewGuid();
             int tokenAllowance = checked(1024 + request.TokenLimit + Encoding.UTF8.GetByteCount(request.PublicOrPrivateInput)
                 + (request.OutputSchema is { } schema ? Encoding.UTF8.GetByteCount(schema.GetRawText()) : 0));
-            var reservation = new AiRunEntry(Guid.NewGuid(), lease.Id, route.ConnectionId, route.Model, route.BillingMode,
-                research, now, tokenAllowance, paid ? route.ReservedUsd : null, "reserved");
             string? blocked = await store.UpdateAsync<string?>(owner, state =>
             {
-                if (!WorkspaceJobs.Owns(WorkspaceJobs.Get(state, lease.Id), lease, clock.GetUtcNow()))
+                var now = clock.GetUtcNow();
+                if (!WorkspaceJobs.Owns(WorkspaceJobs.Get(state, lease.Id), lease, now))
                     return (state, "lease_lost");
                 if (!IsSelected(state, route, research)) return (state, "connection_disabled");
+                if (synthesisInput is not null && AnalysisSnapshots.HasPrivateContext(synthesisInput)
+                    && !AnalysisSnapshots.IsCurrentContext(state, synthesisInput, now))
+                    return (state, "portfolio_changed");
                 var all = state.AiExecutions ?? [];
                 if (all.Any(item => item.JobId == lease.Id && item.Research == research))
                     return (state, "outcome_unknown");
@@ -148,6 +144,10 @@ public sealed class VerifiedAnalysisJob(IServiceScopeFactory scopes, TimeProvide
                         return (state, "budget_exhausted");
                 }
                 else if (route.BillingMode != "chatgpt_plan") return (state, "blocked_capability");
+                // Save only the snapshot authorized for dispatch, in the same commit as its reservation.
+                if (synthesisInput is not null) state = WorkspaceJobs.StoreAnalysisSnapshot(state, synthesisInput);
+                var reservation = new AiRunEntry(reservationId, lease.Id, route.ConnectionId, route.Model, route.BillingMode,
+                    research, now, tokenAllowance, paid ? route.ReservedUsd : null, "reserved");
                 return (state with { AiExecutions = [.. all, reservation] }, null);
             }, ct);
             if (blocked is not null) return new(Id, null, "blocked", blocked, null, null, route.BillingMode, null, []);
@@ -157,7 +157,7 @@ public sealed class VerifiedAnalysisJob(IServiceScopeFactory scopes, TimeProvide
             var redacted = receipt with { Text = null, Tools = [], CostUsd = receipt.CostUsd is { Sign: >= 0 } ? receipt.CostUsd : null };
             await store.UpdateAsync(owner, state =>
             {
-                return (state with { AiExecutions = state.AiExecutions!.Select(item => item.Id == reservation.Id
+                return (state with { AiExecutions = state.AiExecutions!.Select(item => item.Id == reservationId
                     ? item with { Status = receipt.Status, Receipt = redacted } : item).ToArray() }, true);
             }, ct);
             return receipt;

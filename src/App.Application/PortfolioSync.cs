@@ -33,7 +33,13 @@ public sealed class PortfolioSync(IWorkspaceStore store, TimeProvider clock)
         for (int page = 0; page < 20; page++)
         {
             ct.ThrowIfCancellationRequested();
-            PortfolioPage next = await source.ReadPageAsync(id, cursor, ct);
+            PortfolioPage next;
+            try { next = await source.ReadPageAsync(id, cursor, ct); }
+            catch (Exception ex) when (ex is HttpRequestException or IOException or TimeoutException or OperationCanceledException)
+            {
+                ct.ThrowIfCancellationRequested();
+                return Failure("provider_unavailable");
+            }
             if (next.Status != "ok") return Failure(next.Status);
             if (next.SourcePortfolioId != id || next.FormatVersion != "v1" || next.Positions is null) return Failure("schema_error");
             if (page == 0) { revision = next.Revision; asOf = next.SourceAsOf; }

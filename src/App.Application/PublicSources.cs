@@ -37,16 +37,18 @@ public static class PublicSourceRevisions
             if (indices.TryGetValue(key, out int index))
             {
                 Observation current = rows[index];
-                if (current.FetchedAt > sample.FetchedAt) continue;
+                var lastCheck = current.ConfirmedAt is { Length: > 0 } checks ? checks[^1] : current.FetchedAt;
+                if (lastCheck > sample.FetchedAt) continue;
                 if (current.ValueDecimal == sample.ValueDecimal && current.QualityStatus == sample.QualityStatus)
                 {
-                    rows[index] = current with { FetchedAt = sample.FetchedAt };
+                    if (sample.FetchedAt > lastCheck)
+                        rows[index] = current with { ConfirmedAt = [.. current.ConfirmedAt ?? [], sample.FetchedAt] };
                     continue;
                 }
                 revision = current.Revision + 1;
             }
             indices[key] = rows.Count;
-            rows.Add(sample with { Revision = revision, Id = PortfelJson.Hash(new { key, revision }) });
+            rows.Add(sample with { Revision = revision, Id = PortfelJson.Hash(new { key, revision }), ConfirmedAt = null });
         }
 
         Market[] markets = batch.Status == "ok" && batch.Markets.Length == 0 && sourceId == "coingecko"

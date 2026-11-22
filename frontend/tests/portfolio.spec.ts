@@ -45,6 +45,18 @@ for (const width of [390, 1440]) {
     await go(page, 'Лента')
     await expect(page.getByRole('heading', { name: 'Лента', exact: true })).toBeVisible()
     await expect(page.getByText('SOL · демонстрационный обзор', { exact: true })).toBeVisible({ timeout: 15_000 })
+    if (width === 1440) {
+      const legacy = await (await page.request.get('/api/v1/feed?asset=5426&importance=normal')).json()
+      const current = await (await page.request.get('/api/v2/feed?asset=5426&importance=info')).json()
+      expect(legacy.items[0].id).toBe(current.items[0].id)
+      expect(legacy.items[0].analysis).toMatchObject({ schema_version: 'v1', title: current.items[0].analysis.headline, importance: 'normal' })
+      expect(legacy.items[0].analysis.sections.map((s: { block: string }) => s.block)).toEqual(['economy', 'supply', 'markets', 'development'])
+      expect(current.items[0].analysis).toMatchObject({ schema_version: '1.0', severity: 'info' })
+      const asset = await (await page.request.get('/api/v1/assets/5426')).json()
+      const history = await (await page.request.get('/api/v1/assets/5426/analyses')).json()
+      expect(asset.latest[0].analysis).toEqual(legacy.items[0].analysis)
+      expect(history[0].analysis).toEqual(legacy.items[0].analysis)
+    }
     await page.getByRole('button', { name: 'Открыть анализ' }).first().click()
     await expect(page.getByRole('dialog').getByText('Факты и источники')).toBeVisible()
     await page.keyboard.press('Escape')

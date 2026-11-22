@@ -56,16 +56,12 @@ internal static class ApiEndpoints
 
         owner.MapGet("/assets", async (HttpContext http, IWorkspaceStore store, CancellationToken ct) =>
             (await Read(store, http, ct)).Assets.Select(asset => new { asset.Asset, asset.Links }));
-        owner.MapGet("/assets/{id}", async (string id, HttpContext http, IWorkspaceStore store, TimeProvider clock, CancellationToken ct) =>
-        {
-            Workspace state = await Read(store, http, ct);
-            AssetData asset = Asset(state, id);
-            var portfolio = PortfolioQueries.Portfolio(state, clock.GetUtcNow(), true);
-            var history = PortfolioQueries.Feed(state, id, null, null, null, null, null, null, clock.GetUtcNow());
-            return new AssetView(asset.Asset, portfolio.Positions.SingleOrDefault(item => item.AssetId == id), asset.Links,
-                asset.Observations.Max(item => (DateTimeOffset?)item.SourceAsOf), history.Items.FirstOrDefault()?.Analysis.Summary,
-                history.Items, history.Updating);
-        });
+        var legacyReads = owner.MapGroup("");
+        legacyReads.AddEndpointFilter(async (context, next) => Results.Json(await next(context), LegacyFeedJson.Options));
+        MapAnalysisReads(legacyReads);
+        var v2 = app.MapGroup("/api/v2");
+        MapAnalysisReads(v2.MapGroup("").RequireAuthorization("workspace"));
+        v2.MapFallback("/{**path}", (HttpContext http) => WriteFault(http, new AppFault("not_found", "Метод API не найден.", 404)));
         owner.MapGet("/assets/{id}/metrics", async (string id, string? block, DateOnly? from, DateOnly? to, string? granularity,
             HttpContext http, IWorkspaceStore store, TimeProvider clock, CancellationToken ct) =>
         {
@@ -88,21 +84,11 @@ internal static class ApiEndpoints
             Asset(await Read(store, http, ct), id).Events.OrderByDescending(item => item.Version));
         owner.MapGet("/assets/{id}/sources", async (string id, HttpContext http, IWorkspaceStore store, CancellationToken ct) =>
             Asset(await Read(store, http, ct), id).Sources);
-        owner.MapGet("/assets/{id}/analyses", async (string id, HttpContext http, IWorkspaceStore store, TimeProvider clock, CancellationToken ct) =>
-        {
-            Workspace state = await Read(store, http, ct);
-            _ = Asset(state, id);
-            return state.Feed.Where(item => item.AssetId == id).OrderByDescending(item => item.PublishedAt)
-                .Select(item => PortfolioQueries.WithCurrentPersonalization(state, item, clock.GetUtcNow()));
-        });
         owner.MapPost("/assets/{id}/analysis-runs", (string id, HttpContext http, WorkspaceJobs jobs, CancellationToken ct) =>
             Queue(http, jobs, JobKind.AssetAnalysis, id, ct));
         owner.MapGet("/events", async (HttpContext http, IWorkspaceStore store, CancellationToken ct) =>
             (await Read(store, http, ct)).Assets.SelectMany(asset => asset.Events).OrderByDescending(item => item.Version));
 
-        owner.MapGet("/feed", async (string? asset, string? type, string? importance, DateOnly? from, DateOnly? to, bool? read, Guid? cursor,
-            HttpContext http, IWorkspaceStore store, TimeProvider clock, CancellationToken ct) =>
-            PortfolioQueries.Feed(await Read(store, http, ct), asset, type, importance, from, to, read, cursor, clock.GetUtcNow()));
         owner.MapPatch("/feed/{id:guid}/read", async (Guid id, ReadState value, HttpContext http, IWorkspaceStore store, CancellationToken ct) =>
            await store.UpdateAsync(Owner(http), state =>
             {
@@ -127,6 +113,32 @@ internal static class ApiEndpoints
         owner.MapGet("/ai/routes", async (HttpContext http, IWorkspaceStore store, CancellationToken ct) => (await Read(store, http, ct)).AiRoutes);
         owner.MapPatch("/ai/routes", () => AiBlocked());
         api.MapFallback("/{**path}", (HttpContext http) => WriteFault(http, new AppFault("not_found", "Метод API не найден.", 404)));
+    }
+
+    private static void MapAnalysisReads(RouteGroupBuilder owner)
+    {
+        owner.MapGet("/feed", async (string? asset, string? type, string? importance, DateOnly? from, DateOnly? to, bool? read, Guid? cursor,
+            HttpContext http, IWorkspaceStore store, TimeProvider clock, CancellationToken ct) =>
+            PortfolioQueries.Feed(await Read(store, http, ct), asset, type, importance, from, to, read, cursor, clock.GetUtcNow()));
+        owner.MapGet("/assets/{id}", async (string id, HttpContext http, IWorkspaceStore store, TimeProvider clock, CancellationToken ct) =>
+        {
+            Workspace state = await Read(store, http, ct);
+            AssetData asset = Asset(state, id);
+            var now = clock.GetUtcNow();
+            var portfolio = PortfolioQueries.Portfolio(state, now, true);
+            var history = PortfolioQueries.Feed(state, id, null, null, null, null, null, null, now);
+            return new AssetView(asset.Asset, portfolio.Positions.SingleOrDefault(item => item.AssetId == id), asset.Links,
+                asset.Observations.Max(item => (DateTimeOffset?)item.SourceAsOf), history.Items.FirstOrDefault()?.Analysis.Summary,
+                history.Items, history.Updating);
+        });
+        owner.MapGet("/assets/{id}/analyses", async (string id, HttpContext http, IWorkspaceStore store, TimeProvider clock, CancellationToken ct) =>
+        {
+            Workspace state = await Read(store, http, ct);
+            _ = Asset(state, id);
+            var now = clock.GetUtcNow();
+            return state.Feed.Where(item => item.AssetId == id).OrderByDescending(item => item.PublishedAt)
+                .Select(item => PortfolioQueries.WithCurrentPersonalization(state, item, now));
+        });
     }
 
     private static async Task<IResult> DemoLogin(HttpContext http, DemoSettings demo, IAntiforgery csrf,

@@ -80,8 +80,8 @@ public static class PortfolioQueries
                     return items.Where(item => item.Revision == revision);
                 }).ToArray();
                 var series = latest.Where(item => item.QualityStatus is Quality.Ok or Quality.Stale && item.ValueDecimal.HasValue)
-                    .Select(item => new DailyFlow(item.Id, DateOnly.FromDateTime(item.PeriodStart.UtcDateTime), item.ValueDecimal!.Value)).ToArray();
-                bool stale = now - latest.Max(item => item.FetchedAt) > TimeSpan.FromHours(36)
+                    .Select(item => new DailyFlow(item.Id, DateOnly.FromDateTime(item.PeriodStart.UtcDateTime), item.ValueDecimal!.Value, item.QualityStatus)).ToArray();
+                bool stale = now - latest.Max(item => item.CheckedAsOf(now)) > TimeSpan.FromHours(36)
                     || (today > month && !series.Any(item => item.Day >= today.AddDays(-2)));
                 MonthlyFlow Month(DateOnly start, DateOnly end)
                 {
@@ -128,7 +128,7 @@ public static class PortfolioQueries
                     quality is Quality.Ok or Quality.Error ? amount : null, asset.SupplyCoveredThrough, asset.SupplyCoveredFrom, asset.BurnsCovered);
                 return quality is Quality.Stale or Quality.Error && window.QualityStatus == Quality.Missing
                     ? window with { QualityStatus = quality } : window;
-            }).ToArray(), asset.Supply, quality);
+            }).ToArray(), Metrics.CurrentSchedule(asset.Supply.Where(item => item.AssetId == asset.Asset.Id)), quality);
     }
 
     public static IEnumerable<ProjectEvent> CurrentEvents(IEnumerable<ProjectEvent> events) =>
@@ -144,7 +144,8 @@ public static class PortfolioQueries
             ?? throw new AppFault("invalid_cursor", "Курсор ленты устарел.") : null;
         var items = state.Feed.GroupBy(item => item.PublishKey).Select(group => group.MaxBy(item => item.Version)!)
             .Where(item => (asset is null || item.AssetId == asset) && (type is null || item.Type == type)
-                && (importance is null || item.Analysis.Severity == importance) && (read is null || item.Read == read)
+                && (importance is null || item.Analysis.Severity == importance
+                    || importance == "normal" && LegacyImportance(item.Analysis.Severity) == "normal") && (read is null || item.Read == read)
                 && (from is null || LocalDay(item) >= from) && (to is null || LocalDay(item) <= to)
                 && (anchor is null || (item.PublishedAt, item.Id).CompareTo((anchor.PublishedAt, anchor.Id)) < 0))
             .OrderByDescending(item => item.PublishedAt).ThenByDescending(item => item.Id).Take(21).ToArray();
@@ -157,4 +158,6 @@ public static class PortfolioQueries
     public static FeedItem WithCurrentPersonalization(Workspace state, FeedItem item, DateTimeOffset now) =>
         item.Personalization == "current" && !item.Demo && (!CanPersonalize(state, now) || state.Current?.Hash != item.PortfolioHash)
             ? item with { Personalization = "historical" } : item;
+
+    public static string LegacyImportance(string severity) => severity is "info" or "watch" ? "normal" : severity;
 }

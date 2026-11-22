@@ -15,10 +15,12 @@ public static class Metrics
         if (groups.Any(group => group.Select(day => day.Value).Distinct().Skip(1).Any()))
             return new(month, null, expected, groups.Length, null, Quality.Conflict, mtd, []);
 
-        DailyFlow[] observed = groups.Select(group => group.OrderBy(day => day.ObservationId, StringComparer.Ordinal).First()).ToArray();
+        DailyFlow[] observed = groups.Select(group => group.OrderBy(day => day.QualityStatus != Quality.Ok)
+            .ThenBy(day => day.ObservationId, StringComparer.Ordinal).First()).ToArray();
         return new(month, observed.Length == 0 ? null : observed.Aggregate(ExactNumber.Zero, (sum, day) => sum + day.Value),
             expected, observed.Length, expected == 0 ? null : ExactNumber.From(observed.Length).Divide(ExactNumber.From(expected), PercentageDigits),
-            observed.Length == 0 ? Quality.Missing : observed.Length == expected ? Quality.Ok : Quality.Partial,
+            observed.Length == 0 ? Quality.Missing : observed.Any(row => row.QualityStatus == Quality.Stale) ? Quality.Stale
+                : observed.Length == expected ? Quality.Ok : Quality.Partial,
             mtd, observed.Select(day => day.ObservationId).Order(StringComparer.Ordinal).ToArray());
     }
 
@@ -37,10 +39,13 @@ public static class Metrics
     {
         if (days is not (30 or 90 or 365)) throw new ArgumentOutOfRangeException(nameof(days));
         DateTimeOffset end = asOf.AddDays(days);
-        SupplyEvent[] schedule = source.Where(item => item.AssetId == assetId).ToArray();
+        SupplyEvent[] schedule = CurrentSchedule(source.Where(item => item.AssetId == assetId));
         if (schedule.Any(item => item.QuantityTotal.Sign < 0 || item.EndsAt <= item.StartsAt))
             return new(days, Quality.Error, null, null, null, null, null, null);
         SupplyEvent[] candidates = schedule.Where(item => Overlaps(item, asOf, end)).ToArray();
+        if (schedule.GroupBy(item => (item.SourceId, item.Id)).Any(group => group.Skip(1).Any()
+            && group.Any(item => Overlaps(item, asOf, end))))
+            return new(days, Quality.Conflict, null, null, null, null, null, null);
         if (coveredThrough is null && candidates.Length == 0)
             return new(days, Quality.Missing, null, null, null, null, null, null);
 
@@ -88,6 +93,28 @@ public static class Metrics
             complete && burnsCovered ? issueAmount - burnAmount : null,
             complete && burnsCovered && !uncertain && !uncertainBurns ? gross - exits : null);
     }
+
+    // A source's event ID identifies one installment; an allocation may contain many installments.
+    public static SupplyEvent[] CurrentSchedule(IEnumerable<SupplyEvent> source)
+    {
+        return source.GroupBy(item => (item.AssetId, item.SourceId, item.Id)).SelectMany(group =>
+        {
+            var versions = group.Distinct().ToArray();
+            if (versions.Length == 1) return versions;
+            var ranked = versions.Select(item => (Item: item, Rank: VersionRank(item.ScheduleVersion))).ToArray();
+            if (ranked.All(row => row.Rank.HasValue))
+            {
+                var latest = ranked.Max(row => row.Rank);
+                versions = ranked.Where(row => row.Rank == latest).Select(row => row.Item).ToArray();
+            }
+            // Opaque or contradictory versions have no reliable order. Keep alternatives for the window check.
+            return versions.DistinctBy(item => item with { ScheduleVersion = "" }).ToArray();
+        }).ToArray();
+    }
+
+    private static ulong? VersionRank(string version) =>
+        version.StartsWith('v') && ulong.TryParse(version.AsSpan(1), System.Globalization.NumberStyles.None,
+            System.Globalization.CultureInfo.InvariantCulture, out var rank) ? rank : null;
 
     private static bool Overlaps(SupplyEvent item, DateTimeOffset begin, DateTimeOffset end) =>
         item.StartsAt < end && (item.EndsAt is { } stop ? stop > begin : item.StartsAt >= begin);

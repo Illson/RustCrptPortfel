@@ -4,6 +4,16 @@ namespace Portfel.Application;
 
 public static class AnalysisSnapshots
 {
+    internal static bool HasPrivateContext(AnalysisInputV1 snapshot) =>
+        snapshot.PortfolioContext is not null || snapshot.InvestmentProfile is not null
+        || snapshot.SourcePortfolioId is not null || snapshot.PortfolioHash is not null;
+
+    internal static bool IsCurrentContext(Workspace state, AnalysisInputV1 snapshot, DateTimeOffset now) =>
+        snapshot.PortfolioContext is { Mode: "current" } context && PortfolioQueries.CanPersonalize(state, now)
+        && snapshot.PortfolioHash == state.Current!.Hash && snapshot.SourcePortfolioId == state.Current.SourcePortfolioId
+        && snapshot.InvestmentProfile == state.Settings.InvestmentProfile
+        && context.CheckedAt <= now && now - context.CheckedAt <= TimeSpan.FromHours(1);
+
     public static AnalysisInputV1 ForAsset(Workspace workspace, string assetId, DateTimeOffset now)
     {
         AssetData data = workspace.Assets.SingleOrDefault(asset => asset.Asset.Id == assetId)
@@ -24,11 +34,12 @@ public static class AnalysisSnapshots
             sources.TryGetValue(row.SourceId, out Source? source);
             string? url = record?.Url ?? source?.Url;
             if (url is null) return;
-            bool stale = now - row.FetchedAt > maxAge || row.Scope == MetricScope.Token && now - row.SourceAsOf > maxAge;
+            var checkedAt = row.CheckedAsOf(now);
+            bool stale = now - checkedAt > maxAge || row.Scope == MetricScope.Token && now - row.SourceAsOf > maxAge;
             Quality quality = row.QualityStatus == Quality.Ok && stale ? Quality.Stale : row.QualityStatus;
             string period = row.PeriodStart == row.PeriodEnd ? row.SourceAsOf.ToString("O") : $"{row.PeriodStart:O}/{row.PeriodEnd:O}";
             evidence.TryAdd(row.Id, new(row.Id, assetId, row.SourceId, url, record?.Title ?? source!.Name,
-                row.FetchedAt, row.MetricKey, row.ValueDecimal, row.Unit, period, row.Scope, quality,
+                checkedAt, row.MetricKey, row.ValueDecimal, row.Unit, period, row.Scope, quality,
                 PortfelJson.Hash(new { row.Id, row.Revision, record?.ContentHash, row.AdapterVersion, row.MethodologyVersion }),
                 Primary: record?.Primary == true));
             if (!cover[block].Contains(row.Id)) cover[block].Add(row.Id);
@@ -45,7 +56,7 @@ public static class AnalysisSnapshots
                 if (inputs.Length == 0 || inputs.Any(observation => !evidence.ContainsKey(observation.Id))) continue;
                 string id = PortfelJson.Hash(new { Formula = "daily_flow_sum_v1", month.EvidenceIds, month.Month, month.Total, month.Mtd, flow.Scope });
                 Evidence first = evidence[inputs[0].Id];
-                evidence.TryAdd(id, new(id, assetId, flow.SourceId, first.Url, first.Title, inputs.Max(row => row.FetchedAt), flow.MetricKey,
+                evidence.TryAdd(id, new(id, assetId, flow.SourceId, first.Url, first.Title, inputs.Max(row => row.CheckedAsOf(now)), flow.MetricKey,
                     month.Total, flow.Unit, month.Mtd ? $"{month.Month:yyyy-MM-dd}/{now.UtcDateTime:yyyy-MM-dd}" : $"{month.Month:yyyy-MM}",
                     flow.Scope, month.QualityStatus, FormulaVersion: "daily_flow_sum_v1", ObservationIds: month.EvidenceIds));
                 cover[AnalysisBlock.Economics].Add(id);
@@ -75,10 +86,10 @@ public static class AnalysisSnapshots
             .MaxBy(item => item.PublishedAt);
         AnalysisCoverage[] blocks = cover.Select(item => new AnalysisCoverage(item.Key, statuses[item.Key],
             item.Value.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray())).ToArray();
-        return new(AnalysisValidation.SchemaVersion, assetId, now, current?.Hash, evidence.Values.OrderBy(item => item.Id, StringComparer.Ordinal).ToArray(), [], false)
+        return new(AnalysisValidation.SchemaVersion, assetId, now, position is null ? null : current!.Hash, evidence.Values.OrderBy(item => item.Id, StringComparer.Ordinal).ToArray(), [], false)
         {
             Asset = data.Asset,
-            SourcePortfolioId = current?.SourcePortfolioId,
+            SourcePortfolioId = position is null ? null : current!.SourcePortfolioId,
             PortfolioContext = position is null ? null : new("current", current!.LastCheckedAt, position.Quantity, position.ValueUsd, position.SharePct),
             EntityLinks = confirmed,
             Blocks = blocks,

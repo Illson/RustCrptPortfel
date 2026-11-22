@@ -45,7 +45,7 @@ export function EventList({ events, timezone }: { events: ProjectEvent[]; timezo
 export function Dashboard({ timezone, navigate }: { timezone: string; navigate: (path: string) => void }) {
   const [revision, setRevision] = useState(0)
   const portfolio = useLoad<Portfolio>('/portfolio', revision)
-  const feed = useLoad<FeedPage>('/feed', revision)
+  const feed = useLoad<FeedPage>('/feed', revision, 'v2')
   useRefreshWhileUpdating(feed.data, setRevision)
   const refresh = () => setRevision(value => value + 1)
 

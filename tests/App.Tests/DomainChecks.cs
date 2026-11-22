@@ -68,6 +68,15 @@ internal static class DomainChecks
             "Unknown schedule versus confirmed zero");
         Require(Metrics.Supply([issuance with { EndsAt = issuance.StartsAt.AddDays(-1) }], assetId, now, 30, circulation, now.AddDays(30), now).QualityStatus == Quality.Error,
             "Invalid schedule must not be treated as an empty complete window");
+        SupplyWindow Grants(params SupplyEvent[] events) => Metrics.Supply(events, assetId, now, 30, circulation, now.AddDays(30), now);
+        var moved = unlock with { StartsAt = now.AddDays(20), ScheduleVersion = "v10" };
+        var originalGrant = unlock with { StartsAt = now.AddDays(10), ScheduleVersion = "v2" };
+        Require(Grants(moved, originalGrant).Unlocks == unlock.QuantityTotal &&
+            Grants(originalGrant, moved with { StartsAt = now.AddDays(30) }).Unlocks == ExactNumber.Zero,
+            "Latest version of one grant wins before window filtering, regardless of input order");
+        Require(Grants(originalGrant, moved with { ScheduleVersion = "unranked" }) is { QualityStatus: Quality.Conflict, Unlocks: null }
+            && Grants(moved, moved with { QuantityTotal = circulation }) is { QualityStatus: Quality.Conflict, GrossSupplyPressurePct: null },
+            "Ambiguous grant revisions cannot produce a precise supply figure");
 
         var market = new Market("m", "venue", assetId, "token:A", "SAME/USD", "spot", "CEX", ExactNumber.From(4), now, true, Quality.Ok, "a");
         var derivative = market with { ExchangeId = "major", MarketType = "derivative" };
@@ -79,6 +88,12 @@ internal static class DomainChecks
         Require(Metrics.Markets([market], assetId, now.AddHours(2), ["venue"]).QualityStatus == Quality.Stale, "Stale is not a delisting");
         var demo = DemoPortfolio.Sync(Workspace.Empty, now);
         var sol = demo.Assets.Single(asset => asset.Asset.Id == "5426");
+        var staleDays = sol with { Observations = sol.Observations.Select(row => row.MetricKey == "chain_revenue"
+            && row.PeriodStart.Month == beginning.Month ? row with { QualityStatus = Quality.Stale } : row).ToArray() };
+        var staleMonth = PortfolioQueries.Economy(staleDays, now).Single(row => row.MetricKey == "chain_revenue")
+            .Months.Single(month => month.Month == beginning);
+        Require(staleMonth is { QualityStatus: Quality.Stale, ObservedIntervals: 31, MonthOverMonth: null, Total: not null },
+            "Complete but explicitly stale daily values remain stale after aggregation");
         var ambiguous = sol with { Links = sol.Links.Select(link => link with { Status = MappingStatus.Ambiguous }).ToArray() };
         Require(PortfolioQueries.Economy(ambiguous, now).Length == 0, "Unconfirmed links cannot contribute financial metrics");
         Require(PortfolioQueries.CurrentEvents(sol.Events).Single() is { Version: 2, EventAt: null, LocalDate: not null } &&

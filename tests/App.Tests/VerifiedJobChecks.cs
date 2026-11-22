@@ -65,9 +65,34 @@ internal static class VerifiedJobChecks
         Require(PortfolioQueries.WithCurrentPersonalization(completed, completed.Feed[0], now.AddHours(2)).Personalization == "historical",
             "Old personalization is not displayed as current");
         var revoked = completed with { LatestCheck = new(now, "permission_denied") };
-        Require(AnalysisSnapshots.ForAsset(revoked, "5426", now).PortfolioContext is null
+        Require(AnalysisSnapshots.ForAsset(revoked, "5426", now) is { PortfolioContext: null, SourcePortfolioId: null, PortfolioHash: null }
             && PortfolioQueries.WithCurrentPersonalization(revoked, completed.Feed[0], now).Personalization == "historical",
             "Loss of portfolio access disables personalization even when the previous snapshot is recent");
+
+        foreach (var reason in new[] { "revoked", "profile", "holdings" })
+        {
+            string owner = "test:before-synthesis:" + reason;
+            var lease = await Seed(owner);
+            await using var edit = provider.CreateAsyncScope();
+            var store = edit.ServiceProvider.GetRequiredService<IWorkspaceStore>();
+            await store.UpdateAsync(owner, s => (s with { Settings = s.Settings with { InvestmentProfile = "synthetic profile" } }, true), default);
+            var changingResearch = new SyntheticProvider("openai", now, true, async (_, ct) =>
+            {
+                await store.UpdateAsync(owner, s => (reason switch
+                {
+                    "revoked" => s with { LatestCheck = new(now, "permission_denied") },
+                    "profile" => s with { Settings = s.Settings with { InvestmentProfile = null } },
+                    _ => s.RecordSync(new(s.Current!.SourcePortfolioId, now, now, true, "v1", "ok", [])),
+                }, true), ct);
+                return Search();
+            });
+            int calls = writerCount;
+            await runner.RunAsync(owner, lease, research with { Provider = changingResearch }, synthesis, limits, default);
+            var denied = await Read(owner);
+            Require(writerCount == calls && denied.AiExecutions is [{ Research: true }] && denied.Feed.Length == 0
+                && denied.AnalysisSnapshots is null && denied.Jobs.Single().BlockReason == "portfolio_changed",
+                $"No synthesis dispatch, private snapshot or reservation after {reason}");
+        }
 
         const string changed = "test:position-changed";
         var changingLease = await Seed(changed);

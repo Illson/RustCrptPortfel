@@ -127,13 +127,6 @@ public sealed class WorkspaceJobs(IWorkspaceStore store, TimeProvider clock)
         return (Replace(state, end), true);
     }, cancellationToken);
 
-    public Task<bool> SaveAnalysisSnapshotAsync(string owner, Job lease, AnalysisInputV1 snapshot, CancellationToken ct) =>
-        store.UpdateAsync(owner, state =>
-        {
-            if (!Owns(Get(state, lease.Id), lease, clock.GetUtcNow()) || lease.AssetId != snapshot.AssetId) return (state, false);
-            return (StoreAnalysisSnapshot(state, snapshot), true);
-        }, ct);
-
     public Task<bool> FinishAnalysisAsync(string owner, Job lease, AnalysisInputV1? snapshot, AnalysisResultV1? result,
         JobStatus status, string? reason, CancellationToken ct) => store.UpdateAsync(owner, state =>
     {
@@ -158,11 +151,8 @@ public sealed class WorkspaceJobs(IWorkspaceStore store, TimeProvider clock)
         if (snapshot.AsOf > now || AnalysisValidation.Validate(snapshot, analysis) is not null)
             throw new AppFault("invalid_output", "Результат не прошёл проверку публикации.", 409);
         if (state.Feed.Any(item => item.Analysis.SnapshotHash == analysis.SnapshotHash)) return state;
-        bool current = snapshot.PortfolioContext is { Mode: "current" } context
-            && snapshot.PortfolioHash is not null && snapshot.PortfolioHash == state.Current?.Hash
-            && context.CheckedAt <= now && now - context.CheckedAt <= TimeSpan.FromHours(1)
-            && PortfolioQueries.CanPersonalize(state, now);
-        if (!current && !snapshot.Demo && (snapshot.PortfolioContext is not null || snapshot.InvestmentProfile is not null))
+        bool current = AnalysisSnapshots.IsCurrentContext(state, snapshot, now);
+        if (!current && !snapshot.Demo && AnalysisSnapshots.HasPrivateContext(snapshot))
             throw new AppFault("portfolio_changed", "Состав портфеля изменился после начала анализа.", 409);
         if (trigger is not null && (trigger.AssetId != snapshot.AssetId || !snapshot.Events.Contains(trigger)))
             throw new AppFault("invalid_event", "Событие не входит в снимок.", 409);
@@ -188,7 +178,7 @@ public sealed class WorkspaceJobs(IWorkspaceStore store, TimeProvider clock)
         return StoreAnalysisSnapshot(state, snapshot) with { Feed = [.. state.Feed, item] };
     }
 
-    private static Workspace StoreAnalysisSnapshot(Workspace state, AnalysisInputV1 snapshot)
+    internal static Workspace StoreAnalysisSnapshot(Workspace state, AnalysisInputV1 snapshot)
     {
         string hash = snapshot.SnapshotHash;
         if (state.AnalysisSnapshots?.SingleOrDefault(item => item.SnapshotId == snapshot.SnapshotId) is { } existing)

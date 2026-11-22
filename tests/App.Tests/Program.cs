@@ -55,7 +55,28 @@ try
         PortfolioCheck complete = await sync.FetchAsync(owner, DemoPortfolio.PortfolioId, new SyntheticPages(fail: false, now), default);
         Check(complete.Status == "ok" && (await store.ReadAsync(owner, default)).Current!.Positions.Length == 2,
             "All pages are accepted together");
-
+        var good = (await store.ReadAsync(owner, default)).Current!;
+        foreach (Exception error in new Exception[] { new HttpRequestException(), new IOException(), new TimeoutException(), new TaskCanceledException() })
+        {
+            var check = await sync.FetchAsync(owner, DemoPortfolio.PortfolioId, new SyntheticPages(false, now, () => throw error), default);
+            var after = await store.ReadAsync(owner, default);
+            Check(check.Status == "provider_unavailable" && after.LatestCheck == check
+                && after.Current!.Hash == good.Hash && !PortfolioQueries.CanPersonalize(after, now.AddMinutes(3)),
+                "A second-page transport failure preserves holdings and disables personalization");
+        }
+        await sync.FetchAsync(owner, DemoPortfolio.PortfolioId, new SyntheticPages(false, now), default);
+        using var cancel = new CancellationTokenSource();
+        try
+        {
+            await sync.FetchAsync(owner, DemoPortfolio.PortfolioId, new SyntheticPages(false, now, () =>
+            {
+                cancel.Cancel();
+                cancel.Token.ThrowIfCancellationRequested();
+            }), cancel.Token);
+            throw new Exception("Expected caller cancellation");
+        }
+        catch (OperationCanceledException) when (cancel.IsCancellationRequested) { }
+        Check((await store.ReadAsync(owner, default)).LatestCheck?.Status == "ok", "Caller cancellation is not a source failure");
     }
     Console.WriteLine("PASS SQLite migration, restart, idempotency, precision, isolation, cancellation, rollback and metrics");
     DomainChecks.Run(now);
@@ -80,9 +101,13 @@ sealed class FixedClock(DateTimeOffset now) : TimeProvider
     public override DateTimeOffset GetUtcNow() => now;
 }
 
-sealed class SyntheticPages(bool fail, DateTimeOffset now) : IReadOnlyPortfolioSource
+sealed class SyntheticPages(bool fail, DateTimeOffset now, Action? onSecondPage = null) : IReadOnlyPortfolioSource
 {
-    public Task<PortfolioPage> ReadPageAsync(string id, string? cursor, CancellationToken ct) => Task.FromResult(cursor is null
-        ? new PortfolioPage(id, "ok", "v1", "same-version", now, [new("5426", ExactNumber.From(9))], false, "second")
-        : new PortfolioPage(id, fail ? "rate_limited" : "ok", "v1", "same-version", now, [new("1", ExactNumber.From(2))], true, null));
+    public Task<PortfolioPage> ReadPageAsync(string id, string? cursor, CancellationToken ct)
+    {
+        if (cursor is not null) onSecondPage?.Invoke();
+        return Task.FromResult(cursor is null
+            ? new PortfolioPage(id, "ok", "v1", "same-version", now, [new("5426", ExactNumber.From(9))], false, "second")
+            : new PortfolioPage(id, fail ? "rate_limited" : "ok", "v1", "same-version", now, [new("1", ExactNumber.From(2))], true, null));
+    }
 }

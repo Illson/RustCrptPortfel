@@ -56,8 +56,19 @@ public sealed record SourceRecord(string Id, string SourceId, string Url, string
 public sealed record Observation(string Id, string EntityId, string? AssetId, string? ChainId, string MetricKey,
     MetricScope Scope, ExactNumber? ValueDecimal, string Unit, DateTimeOffset PeriodStart, DateTimeOffset PeriodEnd,
     string SourceId, DateTimeOffset SourceAsOf, DateTimeOffset FetchedAt, Quality QualityStatus,
-    string MethodologyVersion, string AdapterVersion, string RawRecordId, int Revision);
-public sealed record DailyFlow(string ObservationId, DateOnly Day, ExactNumber Value);
+    string MethodologyVersion, string AdapterVersion, string RawRecordId, int Revision,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTimeOffset[]? ConfirmedAt = null)
+{
+    // Confirmations are strictly increasing; callers already exclude rows first fetched after asOf.
+    public DateTimeOffset CheckedAsOf(DateTimeOffset asOf)
+    {
+        if (ConfirmedAt is not { Length: > 0 } checks) return FetchedAt;
+        int index = Array.BinarySearch(checks, asOf);
+        if (index < 0) index = ~index - 1;
+        return index < 0 ? FetchedAt : checks[index];
+    }
+}
+public sealed record DailyFlow(string ObservationId, DateOnly Day, ExactNumber Value, Quality QualityStatus = Quality.Ok);
 public sealed record MonthlyFlow(DateOnly Month, ExactNumber? Total, int ExpectedIntervals, int ObservedIntervals,
     ExactNumber? CoverageRatio, Quality QualityStatus, bool Mtd, string[] EvidenceIds)
 {

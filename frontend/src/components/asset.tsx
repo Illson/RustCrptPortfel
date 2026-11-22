@@ -83,7 +83,7 @@ function SupplyTab({ id, revision, timezone }: { id: string; revision: number; t
         </Table></details></CardContent>
     </Card>
     <Card><CardHeader><CardTitle>Расписание выпуска</CardTitle></CardHeader><CardContent>
-      {data.schedule.length ? <ul className="divide-y">{data.schedule.map(item => <li key={item.id} className="flex flex-wrap items-center justify-between gap-2 py-3 first:pt-0 last:pb-0">
+      {data.schedule.length ? <ul className="divide-y">{data.schedule.map((item, index) => <li key={`${item.id}:${index}`} className="flex flex-wrap items-center justify-between gap-2 py-3 first:pt-0 last:pb-0">
         <div><p className="text-sm font-medium">{labels[item.kind] ?? item.kind} · {item.recipient}</p><p className="mt-1 text-xs text-muted-foreground">{date(item.starts_at, timezone)}{item.ends_at && ` — ${date(item.ends_at, timezone)}`}</p></div>
         <div className="flex items-center gap-2"><span className="text-sm" title={item.quantity_total}>{decimal(item.quantity_total)}</span>{item.projected && <Badge variant="outline">Прогноз</Badge>}</div>
       </li>)}</ul> : <p className="text-sm text-muted-foreground">Расписание отсутствует.</p>}
@@ -126,7 +126,7 @@ function SourcesTab({ detail }: { detail: AssetDetail }) {
 export function AssetPage({ id, timezone, back }: { id: string; timezone: string; back: () => void }) {
   const [revision, setRevision] = useState(0)
   const [pollRevision, setPollRevision] = useState(0)
-  const result = useLoad<AssetDetail>(`/assets/${id}`, revision + pollRevision)
+  const result = useLoad<AssetDetail>(`/assets/${id}`, revision + pollRevision, 'v2')
   useRefreshWhileUpdating(result.data, setPollRevision)
   const refresh = () => setRevision(value => value + 1)
   return <div className="grid gap-5"><Button className="justify-self-start" size="sm" variant="ghost" onClick={back}><ArrowLeftIcon />К портфелю</Button>

@@ -162,6 +162,24 @@ internal static class ProviderChecks
         Require(quotes.Status == "ok" && quotes.MaximumSupplyKind == "unknown" && quotes.Observations.Single(item => item.MetricKey == "price").ValueDecimal
             == ExactNumber.Parse("0.123456789012345678901234567890123"), "CMC uses exact stable-ID USD quote");
         var merged = PublicSourceRevisions.Merge(sol, quotes, "cmc_market");
+        var start = clock.GetUtcNow();
+        var priceOnly = sol with { Observations = [] };
+        foreach (var minutes in new[] { 0, 10, 20, 20 })
+        {
+            var observed = quotes.Observations.Single(item => item.MetricKey == "price") with { FetchedAt = start.AddMinutes(minutes) };
+            priceOnly = PublicSourceRevisions.Merge(priceOnly, quotes with { Observations = [observed] }, "cmc_market");
+        }
+        priceOnly = JsonSerializer.Deserialize<AssetData>(JsonSerializer.Serialize(priceOnly, PortfelJson.Options), PortfelJson.Options)!;
+        var historical = PortfolioQueries.Latest(priceOnly, "price", start.AddMinutes(5), "USD");
+        Require(historical is not null && historical.FetchedAt == start && historical.CheckedAsOf(start.AddMinutes(5)) == start
+            && historical.CheckedAsOf(start.AddMinutes(15)) == start.AddMinutes(10)
+            && historical.CheckedAsOf(start.AddMinutes(20)) == start.AddMinutes(20)
+            && priceOnly.Observations.Length == 1 && historical.ConfirmedAt?.Length == 2,
+            "Repeated confirmations survive restart without rewriting earlier as-of valuations");
+        var olderCorrection = quotes.Observations.Single(item => item.MetricKey == "price") with
+            { FetchedAt = start.AddMinutes(15), ValueDecimal = ExactNumber.From(42) };
+        Require(PublicSourceRevisions.Merge(priceOnly, quotes with { Observations = [olderCorrection] }, "cmc_market")
+            .Observations.Length == 1, "An out-of-order batch cannot undo a later confirmation");
         var correction = quotes with { Observations = quotes.Observations.Select(item => item.MetricKey == "price"
             ? item with { ValueDecimal = ExactNumber.From(32) } : item).ToArray() };
         merged = PublicSourceRevisions.Merge(merged, correction, "cmc_market");

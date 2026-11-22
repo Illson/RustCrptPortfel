@@ -101,7 +101,7 @@ export function Feed({ timezone }: { timezone: string }) {
   const positions = useLoad<Portfolio>('/portfolio')
   const filter = new URLSearchParams(Object.entries({ asset, read, type, importance, from, to }).filter(([, value]) => value && value !== 'any')).toString()
   const cursor = page.filter === filter ? page.cursor : null
-  const items = useLoad<FeedPage>(`/feed?${filter}${cursor ? `&cursor=${cursor}` : ''}`, revision)
+  const items = useLoad<FeedPage>(`/feed?${filter}${cursor ? `&cursor=${cursor}` : ''}`, revision, 'v2')
   useRefreshWhileUpdating(cursor ? undefined : items.data, setRevision)
   const refresh = () => setRevision(value => value + 1)
   return <div className="grid gap-6"><div><h1 className="text-3xl font-semibold tracking-tight">Лента</h1><p className="mt-1 text-sm text-muted-foreground">Публикации по активам портфеля.</p></div>
