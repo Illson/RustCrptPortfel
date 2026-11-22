@@ -48,27 +48,24 @@ public sealed class WorkspaceJobs(IWorkspaceStore store, TimeProvider clock)
             return (Replace(state, job), PortfolioQueries.Receipt(job));
         }, cancellationToken);
 
-    public Task<Job?> ClaimAsync(string owner, CancellationToken cancellationToken) => store.UpdateAsync<Job?>(owner, state =>
+    public Task<Job?> ClaimAsync(string owner, CancellationToken cancellationToken) => store.ClaimAsync(owner, clock, cancellationToken);
+
+    public static Job? ClaimCandidate(Job[] active, DateTimeOffset now)
     {
-        DateTimeOffset now = clock.GetUtcNow();
-        Job? job = Array.Find(state.Jobs, item => (item.Status == JobStatus.Queued
+        var busy = active.Where(item => item.Status == JobStatus.Running && item.LeaseUntil > now)
+            .Select(item => (item.Kind, item.AssetId)).ToHashSet();
+        return Array.Find(active, item => (item.Status == JobStatus.Queued
             || item.Status is JobStatus.Running or JobStatus.RetryWait && item.LeaseUntil <= now)
-            && !state.Jobs.Any(other => other.Id != item.Id && other.Kind == item.Kind && other.AssetId == item.AssetId
-                && other.Status == JobStatus.Running && other.LeaseUntil > now));
-        if (job is null) return (state, null);
-        if (job.Status == JobStatus.Running && state.AiExecutions?.Any(item => item.JobId == job.Id) == true)
-        {
-            state = MarkUnsettled(state, job.Id);
-            return (Replace(state, Finish(job, now, JobStatus.Failed, "outcome_unknown")), null);
-        }
+            && !busy.Contains((item.Kind, item.AssetId)));
+    }
+
+    public static Job ClaimTransition(Job job, DateTimeOffset now, bool dispatched)
+    {
+        if (dispatched) return Finish(job, now, JobStatus.Failed, "outcome_unknown");
         if (job.Attempt >= 3)
-        {
-            Job failed = job with { Status = JobStatus.Failed, Lease = null, LeaseUntil = null, BlockReason = "attempts_exhausted", FinishedAt = now };
-            return (Replace(state, failed), null);
-        }
-        Job started = job with { Status = JobStatus.Running, Lease = Guid.NewGuid(), LeaseUntil = now + LeaseDuration, Attempt = job.Attempt + 1, BlockReason = null };
-        return (Replace(state, started), started);
-    }, cancellationToken);
+            return Finish(job, now, JobStatus.Failed, "attempts_exhausted");
+        return job with { Status = JobStatus.Running, Lease = Guid.NewGuid(), LeaseUntil = now + LeaseDuration, Attempt = job.Attempt + 1, BlockReason = null };
+    }
 
     public Task<bool> HeartbeatAsync(string owner, Job lease, CancellationToken cancellationToken) => store.UpdateAsync(owner, state =>
     {
@@ -190,7 +187,7 @@ public sealed class WorkspaceJobs(IWorkspaceStore store, TimeProvider clock)
             System.Text.Json.JsonSerializer.Serialize(snapshot, PortfelJson.Options), snapshot.AsOf)] };
     }
 
-    private static Workspace MarkUnsettled(Workspace state, Guid jobId) => state.AiExecutions is null ? state : state with
+    public static Workspace MarkUnsettled(Workspace state, Guid jobId) => state.AiExecutions is null ? state : state with
     {
         AiExecutions = state.AiExecutions.Select(item => item.JobId == jobId && item.Status == "reserved"
             ? item with { Status = "outcome_unknown" } : item).ToArray(),

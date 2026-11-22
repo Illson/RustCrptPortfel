@@ -632,7 +632,7 @@
         "summary": "Лента",
         "responses": {
           "200": {
-            "description": "Страница items с next_cursor и флагом updating. В API v1 analysis имеет schema_version=v1, title, importance и блоки economy/supply/markets/development. В API v2 analysis имеет schema_version=1.0, headline, severity и блоки economics/supply/markets/project."
+            "description": "Страница items с next_cursor и флагом updating. Массив assets (asset_id, symbol) содержит позиции для фильтра из того же снимка. В API v1 analysis имеет schema_version=v1, title, importance и блоки economy/supply/markets/development. В API v2 analysis имеет schema_version=1.0, headline, severity и блоки economics/supply/markets/project."
           },
           "default": {
             "description": "Ошибка",

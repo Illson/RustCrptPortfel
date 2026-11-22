@@ -52,6 +52,7 @@ for (const width of [390, 1440]) {
       expect(legacy.items[0].analysis).toMatchObject({ schema_version: 'v1', title: current.items[0].analysis.headline, importance: 'normal' })
       expect(legacy.items[0].analysis.sections.map((s: { block: string }) => s.block)).toEqual(['economy', 'supply', 'markets', 'development'])
       expect(current.items[0].analysis).toMatchObject({ schema_version: '1.0', severity: 'info' })
+      expect(current.assets).toContainEqual({ asset_id: '5426', symbol: 'SOL' })
       const asset = await (await page.request.get('/api/v1/assets/5426')).json()
       const history = await (await page.request.get('/api/v1/assets/5426/analyses')).json()
       expect(asset.latest[0].analysis).toEqual(legacy.items[0].analysis)
@@ -79,6 +80,20 @@ for (const width of [390, 1440]) {
     expect(errors).toEqual([])
   })
 }
+
+test('feed asset filter follows the initial sync without navigation', async ({ page }) => {
+  await page.route('**/api/v1/auth/session', route => route.fulfill({ json: { authenticated: true, demo: true } }))
+  await page.route('**/api/v1/settings', route => route.fulfill({ json: { timezone: 'UTC' } }))
+  let reads = 0
+  await page.route(/\/api\/v2\/feed(?:\?.*)?$/, route => {
+    const pending = reads++ === 0
+    return route.fulfill({ json: { items: [], next_cursor: null, updating: pending, assets: pending ? [] : [{ asset_id: '1', symbol: 'BTC' }] } })
+  })
+  await page.goto('/feed')
+  await expect(page.getByText('Анализ выполняется. Новые карточки появятся здесь.')).toBeVisible()
+  await page.getByRole('combobox', { name: 'Актив' }).click()
+  await expect(page.getByRole('option', { name: 'BTC' })).toBeVisible()
+})
 
 test('session, CSRF, idempotency and API fallback', async ({ request }) => {
   const index = await request.get('/')

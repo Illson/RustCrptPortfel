@@ -18,6 +18,7 @@ public static class ProjectEvents
             throw new AppFault("invalid_event", "Для события нужен подтверждённый первоисточник и корректная дата.");
         string id = PortfelJson.Hash(new { AssetId = asset.Asset.Id, primarySourceId, canonicalKey });
         var previous = asset.Events.Where(item => item.Id == id).MaxBy(item => item.Version);
+        if (previous is not null && notice.AnnouncedAt < previous.AnnouncedAt) return asset;
         string[] sourceRefs = records.Select(item => item.Id).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
         ProjectEvent normalized = notice with
         {
@@ -29,9 +30,11 @@ public static class ProjectEvents
         if (previous is not null && (normalized with { Version = previous.Version, SourceRefs = previous.SourceRefs,
                 AnnouncedAt = previous.AnnouncedAt }) == previous)
         {
-            if (sourceRefs.All(previous.SourceRefs.Contains)) return asset;
-            normalized = normalized with { SourceRefs = previous.SourceRefs.Concat(sourceRefs).Distinct(StringComparer.Ordinal).ToArray() };
+            if (sourceRefs.All(previous.SourceRefs.Contains) && normalized.AnnouncedAt == previous.AnnouncedAt) return asset;
+            normalized = normalized with { SourceRefs = previous.SourceRefs.Concat(sourceRefs).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray() };
         }
+        else if (previous is not null && normalized.AnnouncedAt == previous.AnnouncedAt)
+            throw new AppFault("event_conflict", "Первоисточник сообщил разные состояния события с одним временем объявления.");
         return asset with
         {
             Events = [.. asset.Events, normalized],

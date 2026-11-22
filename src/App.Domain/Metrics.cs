@@ -49,20 +49,30 @@ public static class Metrics
         if (coveredThrough is null && candidates.Length == 0)
             return new(days, Quality.Missing, null, null, null, null, null, null);
 
-        SupplyEvent[] events = candidates.OrderBy(item => item.Id, StringComparer.Ordinal)
-            .DistinctBy(item => (item.Kind, item.AllocationId, FallbackId: item.AllocationId is null ? (item.SourceId, item.Id) : default,
-                item.Recipient, item.StartsAt, item.EndsAt, item.QuantityTotal, item.EntersCirculation, item.ExitsCirculation)).ToArray();
+        // Match reports across sources, never installments within a source.
+        var events = new List<SupplyEvent>();
+        foreach (var match in candidates.GroupBy(item => (item.Kind, item.AllocationId,
+            FallbackId: item.AllocationId is null ? (item.SourceId, item.Id) : default,
+            item.Recipient, item.StartsAt, item.EndsAt, item.QuantityTotal, item.EntersCirculation, item.ExitsCirculation)))
+        {
+            var reports = match.GroupBy(item => item.SourceId).OrderBy(group => group.Key, StringComparer.Ordinal).ToArray();
+            if (reports.Any(group => group.Count() != reports[0].Count()))
+                return new(days, Quality.Conflict, null, null, null, null, null, null);
+            events.AddRange(reports[0]);
+        }
         ExactNumber unlocks = ExactNumber.Zero, issuance = ExactNumber.Zero, burns = ExactNumber.Zero, gross = ExactNumber.Zero;
         ExactNumber exits = ExactNumber.Zero;
         HashSet<SupplyKind> ambiguous = [];
         bool uncertain = false, uncertainBurns = false;
-        for (int index = 0; index < events.Length; index++)
+        for (int index = 0; index < events.Count; index++)
         {
             SupplyEvent item = events[index];
             foreach (SupplyEvent other in events.Take(index))
             {
                 if (item.Recipient != other.Recipient || (item.Kind == SupplyKind.Burn) != (other.Kind == SupplyKind.Burn)
                     || (item.AllocationId is not null && other.AllocationId is not null && item.AllocationId != other.AllocationId)
+                    || (item.Kind == other.Kind && item.SourceId == other.SourceId && item.Id != other.Id
+                        && item.AllocationId is not null && item.AllocationId == other.AllocationId)
                     || !Overlaps(other, item.StartsAt, item.EndsAt ?? item.StartsAt.AddTicks(1))) continue;
                 if (item.Kind == SupplyKind.Burn) uncertainBurns = true;
                 else if (item.EntersCirculation != Circulation.No || other.EntersCirculation != Circulation.No) uncertain = true;
@@ -131,7 +141,8 @@ public static class Metrics
     private static ExactNumber? Percent(ExactNumber? value, ExactNumber? denominator) =>
         value is { } amount && denominator is { Sign: > 0 } baseline ? (amount * Hundred).Divide(baseline, PercentageDigits) : null;
 
-    public static MarketSummary Markets(IEnumerable<Market> markets, string assetId, DateTimeOffset asOf, string[] major)
+    public static MarketSummary Markets(IEnumerable<Market> markets, string assetId, DateTimeOffset asOf, string[] major,
+        bool partialCoverage = false)
     {
         Market[] observations = markets.Where(row => row.BaseAssetId == assetId && row.MarketType == "spot"
             && row.LastTradeAt <= asOf && !string.IsNullOrWhiteSpace(row.QuoteAssetId))
@@ -145,11 +156,11 @@ public static class Metrics
             .Select(group => (group.Key, Total: group.Aggregate(ExactNumber.Zero, (sum, row) => sum + row.ReportedVolumeUsd!.Value))).ToArray();
         ExactNumber? total = volumes.Length == 0 ? null : volumes.Aggregate(ExactNumber.Zero, (sum, volume) => sum + volume.Total);
         return new(pairs.Select(row => row.ExchangeId).Distinct(StringComparer.Ordinal).Count(), total,
-            volumes.Length == 0 ? null : Percent(volumes.Max(row => row.Total), total),
+            partialCoverage || volumes.Length == 0 ? null : Percent(volumes.Max(row => row.Total), total),
             major.Length == 0 ? "not_configured" : pairs.Any(row => major.Contains(row.ExchangeId, StringComparer.Ordinal))
                 ? "confirmed_spot" : "unconfirmed",
-            pairs.Length == 0 ? stale ? Quality.Stale : Quality.Missing
+            partialCoverage ? Quality.Partial : pairs.Length == 0 ? stale ? Quality.Stale : Quality.Missing
                 : stale || pairs.Any(row => row.ReportedVolumeUsd is not { Sign: >= 0 }) ? Quality.Partial : Quality.Ok,
-            pairs, volumes.Select(row => new VenueVolume(row.Key, row.Total, Percent(row.Total, total))).ToArray());
+            pairs, volumes.Select(row => new VenueVolume(row.Key, row.Total, partialCoverage ? null : Percent(row.Total, total))).ToArray());
     }
 }

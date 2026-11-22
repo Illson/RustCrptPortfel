@@ -17,7 +17,7 @@ export type FeedItem = { id: string; asset_id: string; type: string; published_a
     numeric_claims: { metric_ref: string; value_decimal: string; unit: string; period: string; scope: string }[] }[];
   actions: { type: string; rationale: string; condition: string; evidence_ids: string[] }[];
 }; asset_symbol: string | null }
-export type FeedPage = { items: FeedItem[]; next_cursor: string | null; updating: boolean }
+export type FeedPage = { items: FeedItem[]; next_cursor: string | null; updating: boolean; assets: { asset_id: string; symbol: string }[] }
 export type AssetDetail = { asset: { id: string; name: string; symbol: string; identifiers: { provider: string; external_id: string; chain: string | null; contract: string | null }[] }; position: Position | null; links: { entity_id: string; status: string }[]; data_as_of: string | null; last_conclusion: string | null; latest: FeedItem[]; updating: boolean }
 export type Change = { absolute: string; percentage_points: string | null; transition: string }
 export type FlowSeries = { metric_key: string; scope: string; unit: string; source_id: string; entity_id: string; chain_id: string | null;

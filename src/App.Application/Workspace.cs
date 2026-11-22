@@ -38,7 +38,10 @@ public sealed record JobReceipt(Guid JobId, JobStatus Status, DateTimeOffset Cre
 
 public sealed record AssetData(Asset Asset, AssetEntityLink[] Links, Observation[] Observations, SupplyEvent[] Supply,
     DateTimeOffset? SupplyCoveredThrough, Market[] Markets, ProjectEvent[] Events, Source[] Sources, string MaximumSupplyKind,
-    DateTimeOffset? SupplyCoveredFrom = null, bool BurnsCovered = false, SourceRecord[]? SourceRecords = null);
+    DateTimeOffset? SupplyCoveredFrom = null, bool BurnsCovered = false, SourceRecord[]? SourceRecords = null,
+    MarketCoverage[]? MarketCoverage = null);
+
+public sealed record MarketCoverage(string SourceId, DateTimeOffset CheckedAt, bool Complete);
 
 public sealed record PortfolioCheck(DateTimeOffset FetchedAt, string Status, string? SnapshotHash = null);
 
@@ -86,6 +89,7 @@ public sealed record FeedReport(Guid Id, Guid FeedItemId, string Reason, DateTim
 
 public interface IWorkspaceStore
 {
+    Task<Job?> ClaimAsync(string ownerId, TimeProvider clock, CancellationToken ct);
     Task<Workspace> ReadAsync(string ownerId, CancellationToken cancellationToken);
     Task<T> UpdateAsync<T>(string ownerId, Func<Workspace, (Workspace Next, T Result)> change, CancellationToken cancellationToken);
     Task<bool> ReadyAsync(CancellationToken cancellationToken);
@@ -108,7 +112,8 @@ public sealed record FlowSeries(string MetricKey, MetricScope Scope, string Unit
     string EntityId, string? AssetId, string? ChainId, string SourceId, string MethodologyVersion, Change? ThreeMonths);
 public sealed record SupplyView(string MaximumSupplyKind, ExactNumber? MaximumSupply, ExactNumber? TotalSupply,
     ExactNumber? CirculatingSupply, DateTimeOffset? DataAsOf, SupplyWindow[] Windows, SupplyEvent[] Schedule, Quality CirculationStatus);
-public sealed record FeedPage(FeedItem[] Items, Guid? NextCursor, bool Updating);
+public sealed record FeedAsset(string AssetId, string Symbol);
+public sealed record FeedPage(FeedItem[] Items, Guid? NextCursor, bool Updating, FeedAsset[] Assets);
 
 public sealed class AppFault(string code, string message, int status = 422) : Exception(message)
 {

@@ -38,6 +38,8 @@ public sealed record PortfolioSnapshot(string SourcePortfolioId, DateTimeOffset 
     {
         if (!incoming.IsComplete || incoming.Status != "ok" || incoming.FormatVersion != "v1")
             throw new InvalidOperationException("Снимок CMC неполон или имеет неподдерживаемый формат.");
+        if (incoming.SourceAsOf > incoming.FetchedAt)
+            throw new InvalidOperationException("Время снимка источника позже его получения.");
         if (incoming.Positions is null || incoming.Positions.Any(position => position is null))
             throw new InvalidOperationException("Состав снимка CMC нарушает контракт.");
         Position[] sorted = incoming.Positions.OrderBy(position => position.AssetId, StringComparer.Ordinal).ToArray();
