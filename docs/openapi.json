@@ -269,11 +269,12 @@
       }
     },
     "/assets/{id}": {
+      "servers": [{ "url": "/api/v1" }, { "url": "/api/v2" }],
       "get": {
         "summary": "Карточка актива",
         "responses": {
           "200": {
-            "description": "Успешный ответ"
+            "description": "Карточка и последние публикации. В latest элементы analysis имеют тот же формат версии API, что и GET /feed. При updating=true ожидается синхронизация либо анализ."
           },
           "default": {
             "description": "Ошибка",
@@ -507,11 +508,12 @@
       }
     },
     "/assets/{id}/analyses": {
+      "servers": [{ "url": "/api/v1" }, { "url": "/api/v2" }],
       "get": {
         "summary": "analyses",
         "responses": {
           "200": {
-            "description": "Успешный ответ"
+            "description": "История версий карточек. Поле analysis имеет тот же формат версии API, что и GET /feed."
           },
           "default": {
             "description": "Ошибка",
@@ -625,11 +627,12 @@
       }
     },
     "/feed": {
+      "servers": [{ "url": "/api/v1" }, { "url": "/api/v2" }],
       "get": {
         "summary": "Лента",
         "responses": {
           "200": {
-            "description": "Успешный ответ"
+            "description": "Страница items с next_cursor и флагом updating. В API v1 analysis имеет schema_version=v1, title, importance и блоки economy/supply/markets/development. В API v2 analysis имеет schema_version=1.0, headline, severity и блоки economics/supply/markets/project."
           },
           "default": {
             "description": "Ошибка",
@@ -660,6 +663,7 @@
           {
             "name": "importance",
             "in": "query",
+            "description": "normal включает info и watch; точное значение info, watch, important или critical отбирает только эту категорию.",
             "schema": {
               "type": "string"
             }
@@ -698,6 +702,27 @@
             "Session": []
           }
         ]
+      }
+    },
+    "/feed/{id}/reports": {
+      "post": {
+        "summary": "Записать замечание к версии карточки (не отправляется вовне)",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+          { "name": "X-CSRF-Token", "in": "header", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "required": ["reason"], "properties": { "reason": { "type": "string", "minLength": 1, "maxLength": 800 } } }
+            }
+          }
+        },
+        "responses": {
+          "204": { "description": "Замечание сохранено" },
+          "default": { "description": "Ошибка", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
       }
     },
     "/feed/{id}/read": {

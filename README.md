@@ -1,6 +1,6 @@
 # dotnetCrptPortfel
 
-Веб-приложение для анализа криптопортфеля. ASP.NET Core API и отдельный worker работают на .NET 11 с Runtime Async V2. React, TypeScript и Vite собирают интерфейс. API и worker используют один файл SQLite. Состав, очередь, настройки и лента сохраняются между перезапусками.
+Веб-приложение для анализа криптопортфеля. ASP.NET Core API и отдельный worker работают на .NET 11 с Runtime Async V2. Интерфейс — React, TypeScript, Vite и shadcn/ui. Docker Compose запускает frontend, API и worker. SQLite хранит состав, задания, настройки и версии ленты в одном локальном файле; отдельный сервер БД не нужен.
 
 ## Запуск сайта
 
@@ -11,13 +11,15 @@ docker compose up --build
 
 Откройте [сайт](http://localhost:5080) и нажмите **Открыть демо-портфель**. Демо работает только в Development с `Demo__Enabled=true`. Первая синхронизация ставит задания анализа в очередь. Ссылки на учебные источники и карточки помечены в интерфейсе.
 
-Для запуска без Docker соберите `pnpm --dir frontend install --frozen-lockfile` и `pnpm --dir frontend build`. В обоих терминалах из корня проекта задайте:
+Для запуска без Docker нужны SDK .NET `11.0.100`, Node `24.22.3` и pnpm `11.25.0`. Соберите `pnpm --dir frontend install --frozen-lockfile` и `pnpm --dir frontend build`. В обоих терминалах из корня проекта задайте:
 
 ```powershell
 $env:DOTNET_ENVIRONMENT = 'Development'
 $env:Demo__Enabled = 'true'
 $env:Storage__DatabasePath = Join-Path $PWD '.portfel/portfel.db'
 ```
+
+В обоих процессах используйте один абсолютный `Storage__DatabasePath`. В Production путь обязателен. В Compose оба процесса используют `/data/portfel.db` в томе `data`; при обновлении сохраните прежнее имя Compose-проекта, чтобы подключить тот же том.
 
 Запустите worker в первом терминале и API во втором:
 
@@ -31,14 +33,35 @@ $env:Security__KeyDirectory = Join-Path $PWD '.portfel/keys'
 dotnet run --project src/App.Api --urls http://127.0.0.1:5080
 ```
 
-SQLite создаётся миграцией EF Core при запуске. Каждый процесс должен указывать один и тот же абсолютный `Storage__DatabasePath`. При Docker файл находится в общем томе `data`. В SQLite точные десятичные значения хранятся строками, преобразование в `double` отсутствует. Обновления одного владельца сериализуются транзакцией записи. Используйте файл на локальном диске.
+EF Core применяет миграции при запуске под блокировкой записи SQLite. При обновлении старого файла миграция переносит задания и версии карточек из JSON в таблицы SQLite, сохраняя идентификаторы, прочитанность и даты. Если миграция прерывается, незавершённая транзакция откатывается, а повторный запуск пробует снова. Ключи идемпотентности и публикаций уникальны на уровне БД. Снимок, версия карточки и статус задания фиксируются одной транзакцией. Точные числа хранятся строками. `GET /api/v1/health/ready` проверяет наличие таблиц; контракт API доступен на `/openapi/v1.json`.
+
+Для `GET /feed`, `/assets/{id}` и `/assets/{id}/analyses` доступны два представления. Префикс `/api/v1` сохраняет прежний `analysis` (`title`, `importance`, блоки `economy` и `development`); фильтр `importance=normal` включает `info` и `watch`. Интерфейс читает эти три маршрута через `/api/v2` (`headline`, `severity`, блоки `economics` и `project`). Авторизация одинакова; запись и остальные запросы остаются на `/api/v1`.
+
+SQLite рассчитан на один хост: режим WAL требует общего локального диска, а не NFS или раздельных томов для API и worker. Перед обновлением остановите оба процесса и сохраните копию данных (`docker compose stop`, не `down -v`). Не копируйте только `.db`, пока на него пишет процесс; для работающего приложения используйте SQLite backup API.
+
+Compose публикует только frontend на `127.0.0.1`. Для внешнего размещения нужны HTTPS и приватное хранение ключей Data Protection: `Security__KeyDirectory`, при необходимости PKCS#12 через `Security__KeyCertificatePath` и `Security__KeyCertificatePassword`. Ни параметр демо, ни рыночный ключ не открывают доступ к данным в Production.
 
 ### Статус реализации
 
 - `BLOCKED_CMC_AUTH` — официальный контракт входа для приложения не подтверждён. `BLOCKED_CMC_ACCESS` — разрешённое чтение личного портфеля не подтверждено. Подтверждение и тесты с реальным портфелем остаются отдельными задачами. [CMC API](https://coinmarketcap.com/api/documentation/guides/authentication/) · [CMC MCP](https://coinmarketcap.com/api/mcp/)
-- Работают учебная синхронизация, портфель, экран актива, четыре блока данных, календарь, лента, прочитанность, постановка и отмена заданий, настройки расписания. Рыночные коннекторы, реальный поиск, переподключение AI, лимиты и использование плана ChatGPT ещё не подключены к рабочему процессу. HTTP-адаптеры AI реализованы отдельно от демо.
-- Для фронтенда выбран нейтральный `radix-nova`. Компоненты подключены к локальным зависимостям Radix. Штатный `shadcn init` требует доступа к реестру.
-- [API](src/App.Api), [worker](src/App.Worker), [расчёты и контракты](src/App.Domain), [сценарии и учебный набор](src/App.Application), [SQLite и AI HTTP](src/App.Infrastructure), [frontend](frontend).
+- Работают учебная синхронизация, портфель, экран актива, четыре блока данных, календарь, лента, версии и замечания к карточкам, постановка и отмена заданий, настройки расписания. Демо не запускает платный AI и не использует реальные позиции.
+- Реализованы и проверены на синтетических HTTP-ответах адаптеры CMC Market Data, DefiLlama Free, CoinGecko Pro, OpenAI Responses, Anthropic Messages, OpenAI-compatible и HTTP/SSE inference плана ChatGPT. Рабочая синхронизация, ввод AI-ключей и OAuth ChatGPT не включены. Детали и оставшиеся работы — в [ревью ТЗ](docs/review-tz-1.1.md).
+- Интерфейс использует нейтральный preset `nova` с Radix, созданный `shadcn@4.23.0 init --preset nova --base radix --template vite --no-monorepo`.
+- [API](src/App.Api), [worker](src/App.Worker), [расчёты и контракты](src/App.Domain), [сценарии и учебный набор](src/App.Application), [миграции и адаптеры](src/App.Infrastructure), [frontend](frontend).
+
+### Проверки веб-приложения
+
+```powershell
+dotnet restore dotnetCrptPortfel.slnx --locked-mode
+dotnet build dotnetCrptPortfel.slnx --no-restore -warnaserror
+dotnet run --project tests/App.Tests --no-build
+pnpm --dir frontend install --frozen-lockfile
+pnpm --dir frontend build
+pnpm --dir frontend exec playwright install chromium
+pnpm --dir frontend test:e2e
+```
+
+Тесты хранилища используют отдельные временные файлы SQLite. UI-тесты требуют запущенный экземпляр Development с демонстрационным worker и отдельными данными. По умолчанию тестируют `http://127.0.0.1:5080`; другой адрес можно передать через `PORTFEL_E2E_URL`, установленный браузер — через `PORTFEL_E2E_CHANNEL` (`msedge` / `chrome`).
 
 ## Режим CLI
 

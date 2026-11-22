@@ -1,8 +1,10 @@
 using System.Globalization;
 using System.Security.Claims;
+using System.Text.Json;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Http.Features;
 using Portfel.Application;
 using Portfel.Domain;
 
@@ -54,15 +56,12 @@ internal static class ApiEndpoints
 
         owner.MapGet("/assets", async (HttpContext http, IWorkspaceStore store, CancellationToken ct) =>
             (await Read(store, http, ct)).Assets.Select(asset => new { asset.Asset, asset.Links }));
-        owner.MapGet("/assets/{id}", async (string id, HttpContext http, IWorkspaceStore store, TimeProvider clock, CancellationToken ct) =>
-        {
-            Workspace state = await Read(store, http, ct);
-            AssetData asset = Asset(state, id);
-            var portfolio = PortfolioQueries.Portfolio(state, clock.GetUtcNow(), true);
-            var history = PortfolioQueries.Feed(state, id, null, null, null, null, null, null).Items;
-            return new AssetView(asset.Asset, portfolio.Positions.SingleOrDefault(item => item.AssetId == id), asset.Links,
-                asset.Observations.Max(item => (DateTimeOffset?)item.SourceAsOf), history.FirstOrDefault()?.Analysis.Summary, history);
-        });
+        var legacyReads = owner.MapGroup("");
+        legacyReads.AddEndpointFilter(async (context, next) => Results.Json(await next(context), LegacyFeedJson.Options));
+        MapAnalysisReads(legacyReads);
+        var v2 = app.MapGroup("/api/v2");
+        MapAnalysisReads(v2.MapGroup("").RequireAuthorization("workspace"));
+        v2.MapFallback("/{**path}", (HttpContext http) => WriteFault(http, new AppFault("not_found", "Метод API не найден.", 404)));
         owner.MapGet("/assets/{id}/metrics", async (string id, string? block, DateOnly? from, DateOnly? to, string? granularity,
             HttpContext http, IWorkspaceStore store, TimeProvider clock, CancellationToken ct) =>
         {
@@ -85,27 +84,19 @@ internal static class ApiEndpoints
             Asset(await Read(store, http, ct), id).Events.OrderByDescending(item => item.Version));
         owner.MapGet("/assets/{id}/sources", async (string id, HttpContext http, IWorkspaceStore store, CancellationToken ct) =>
             Asset(await Read(store, http, ct), id).Sources);
-        owner.MapGet("/assets/{id}/analyses", async (string id, HttpContext http, IWorkspaceStore store, CancellationToken ct) =>
-        {
-            Workspace state = await Read(store, http, ct);
-            _ = Asset(state, id);
-            return state.Feed.Where(item => item.AssetId == id).OrderByDescending(item => item.PublishedAt);
-        });
         owner.MapPost("/assets/{id}/analysis-runs", (string id, HttpContext http, WorkspaceJobs jobs, CancellationToken ct) =>
             Queue(http, jobs, JobKind.AssetAnalysis, id, ct));
         owner.MapGet("/events", async (HttpContext http, IWorkspaceStore store, CancellationToken ct) =>
             (await Read(store, http, ct)).Assets.SelectMany(asset => asset.Events).OrderByDescending(item => item.Version));
 
-        owner.MapGet("/feed", async (string? asset, string? type, string? importance, DateOnly? from, DateOnly? to, bool? read, Guid? cursor,
-            HttpContext http, IWorkspaceStore store, CancellationToken ct) =>
-            PortfolioQueries.Feed(await Read(store, http, ct), asset, type, importance, from, to, read, cursor));
         owner.MapPatch("/feed/{id:guid}/read", async (Guid id, ReadState value, HttpContext http, IWorkspaceStore store, CancellationToken ct) =>
-            await store.UpdateAsync(Owner(http), state =>
+           await store.UpdateAsync(Owner(http), state =>
             {
-                FeedItem item = state.Feed.SingleOrDefault(item => item.Id == id)
+                _ = state.Feed.SingleOrDefault(item => item.Id == id)
                     ?? throw new AppFault("feed_item_not_found", "Карточка не найдена.", 404);
                 return (state with { Feed = state.Feed.Select(row => row.Id == id ? row with { Read = value.Read } : row).ToArray() }, new ReadState(value.Read));
             }, ct));
+        owner.MapPost("/feed/{id:guid}/reports", Report);
         owner.MapGet("/integrations/status", (DemoSettings demo) => Integrations.Get(demo.Enabled));
         owner.MapGet("/settings", async (HttpContext http, IWorkspaceStore store, CancellationToken ct) => (await Read(store, http, ct)).Settings);
         owner.MapPatch("/settings", (Settings settings, HttpContext http, IWorkspaceStore store, CancellationToken ct) =>
@@ -124,6 +115,32 @@ internal static class ApiEndpoints
         api.MapFallback("/{**path}", (HttpContext http) => WriteFault(http, new AppFault("not_found", "Метод API не найден.", 404)));
     }
 
+    private static void MapAnalysisReads(RouteGroupBuilder owner)
+    {
+        owner.MapGet("/feed", async (string? asset, string? type, string? importance, DateOnly? from, DateOnly? to, bool? read, Guid? cursor,
+            HttpContext http, IWorkspaceStore store, TimeProvider clock, CancellationToken ct) =>
+            PortfolioQueries.Feed(await Read(store, http, ct), asset, type, importance, from, to, read, cursor, clock.GetUtcNow()));
+        owner.MapGet("/assets/{id}", async (string id, HttpContext http, IWorkspaceStore store, TimeProvider clock, CancellationToken ct) =>
+        {
+            Workspace state = await Read(store, http, ct);
+            AssetData asset = Asset(state, id);
+            var now = clock.GetUtcNow();
+            var portfolio = PortfolioQueries.Portfolio(state, now, true);
+            var history = PortfolioQueries.Feed(state, id, null, null, null, null, null, null, now);
+            return new AssetView(asset.Asset, portfolio.Positions.SingleOrDefault(item => item.AssetId == id), asset.Links,
+                asset.Observations.Max(item => (DateTimeOffset?)item.SourceAsOf), history.Items.FirstOrDefault()?.Analysis.Summary,
+                history.Items, history.Updating);
+        });
+        owner.MapGet("/assets/{id}/analyses", async (string id, HttpContext http, IWorkspaceStore store, TimeProvider clock, CancellationToken ct) =>
+        {
+            Workspace state = await Read(store, http, ct);
+            _ = Asset(state, id);
+            var now = clock.GetUtcNow();
+            return state.Feed.Where(item => item.AssetId == id).OrderByDescending(item => item.PublishedAt)
+                .Select(item => PortfolioQueries.WithCurrentPersonalization(state, item, now));
+        });
+    }
+
     private static async Task<IResult> DemoLogin(HttpContext http, DemoSettings demo, IAntiforgery csrf,
         IWorkspaceStore store, WorkspaceJobs jobs, CancellationToken ct)
     {
@@ -139,8 +156,22 @@ internal static class ApiEndpoints
 
     private static async Task<IResult> Queue(HttpContext http, WorkspaceJobs jobs, JobKind kind, string? id, CancellationToken ct)
     {
-        string key = http.Request.Headers["Idempotency-Key"].FirstOrDefault() ?? Guid.NewGuid().ToString("N");
-        JobReceipt result = await jobs.QueueAsync(Owner(http), kind, id, key, true, ct);
+        var keys = http.Request.Headers["Idempotency-Key"];
+        if (keys.Count > 1) throw new AppFault("invalid_idempotency_key", "Передайте ровно один Idempotency-Key.");
+        string key = keys.FirstOrDefault() ?? Guid.NewGuid().ToString("N");
+        string? unsupportedBody = null;
+        if (http.Features.Get<IHttpRequestBodyDetectionFeature>()?.CanHaveBody == true)
+        {
+            if (http.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } size) size.MaxRequestBodySize = 4096;
+            try
+            {
+                using var body = await JsonDocument.ParseAsync(http.Request.Body, new JsonDocumentOptions { MaxDepth = 8 }, ct);
+                if (body.RootElement.ValueKind != JsonValueKind.Object || body.RootElement.EnumerateObject().Any())
+                    unsupportedBody = body.RootElement.GetRawText();
+            }
+            catch (JsonException) { throw new AppFault("invalid_request", "Неверный формат тела запроса."); }
+        }
+        JobReceipt result = await jobs.QueueAsync(Owner(http), kind, id, key, true, ct, unsupportedBody);
         return Results.Accepted($"/api/v1/jobs/{result.JobId}", result);
     }
 
@@ -154,6 +185,22 @@ internal static class ApiEndpoints
             || settings.InvestmentProfile?.Length > 800)
             throw new AppFault("invalid_settings", "Проверьте часовой пояс IANA, время HH:mm и список бирж.");
         return store.UpdateAsync(Owner(http), state => (state with { Settings = settings }, settings), ct);
+    }
+
+    private static async Task<IResult> Report(Guid id, ReportRequest report, HttpContext http, IWorkspaceStore store,
+        TimeProvider clock, CancellationToken ct)
+    {
+        string? reason = report.Reason?.Trim();
+        if (string.IsNullOrEmpty(reason) || reason.Length > 800)
+            throw new AppFault("invalid_report", "Опишите замечание в пределах 800 символов.");
+        await store.UpdateAsync(Owner(http), state =>
+        {
+            if (!state.Feed.Any(item => item.Id == id)) throw new AppFault("feed_item_not_found", "Карточка не найдена.", 404);
+            FeedReport[] reports = state.FeedReports ?? [];
+            if (reports.Any(item => item.FeedItemId == id && item.Reason == reason)) return (state, true);
+            return (state with { FeedReports = [.. reports, new(Guid.NewGuid(), id, reason, clock.GetUtcNow())] }, true);
+        }, ct);
+        return Results.NoContent();
     }
 
     private static Task<Workspace> Read(IWorkspaceStore store, HttpContext http, CancellationToken ct) => store.ReadAsync(Owner(http), ct);
@@ -175,5 +222,6 @@ internal static class ApiEndpoints
 
     private sealed record Session(bool Authenticated, bool Demo, bool DemoAvailable, string Authentication, string PortfolioAccess, string? CsrfToken);
     private sealed record ReadState(bool Read);
+    private sealed record ReportRequest(string Reason);
     private sealed record ApiError(string Code, string Message, bool Retryable, string RequestId, object? Details);
 }

@@ -43,6 +43,21 @@ public readonly struct ExactNumber : IEquatable<ExactNumber>, IComparable<ExactN
         return new(text[0] == '-' ? -value : value, fraction.Length);
     }
 
+    public static ExactNumber ParseProviderNumber(string text)
+    {
+        int marker = text.AsSpan().IndexOfAny('e', 'E');
+        if (marker < 0) return Parse(text);
+        if (text.Length > 264 || !int.TryParse(text.AsSpan(marker + 1), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out int exponent)
+            || exponent is < -256 or > 256)
+            throw new FormatException("Недопустимый десятичный порядок.");
+        ExactNumber mantissa = Parse(text[..marker]);
+        int adjustedScale = mantissa.scale - exponent;
+        var value = new ExactNumber(mantissa.coefficient * Power(Math.Max(0, -adjustedScale)), Math.Max(0, adjustedScale));
+        if (value.scale > 96 || value.ToString().Length > 257)
+            throw new FormatException("Число источника превышает допустимую точность.");
+        return value;
+    }
+
     private static bool Digits(ReadOnlySpan<char> value)
     {
         foreach (char character in value)

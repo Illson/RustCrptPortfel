@@ -1,0 +1,44 @@
+name: Checks
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24.22.3'
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
+      - run: dotnet restore dotnetCrptPortfel.slnx --locked-mode
+      - run: dotnet build dotnetCrptPortfel.slnx --no-restore -warnaserror
+      - name: Check Runtime Async V2 on each .NET project
+        run: |
+          for project in src/*/*.csproj tests/*/*.csproj; do
+            test "$(dotnet msbuild "$project" -getProperty:TargetFramework -nologo)" = net11.0
+            features="$(dotnet msbuild "$project" -getProperty:Features -nologo)"
+            [[ ";$features;" == *";runtime-async=on;"* ]]
+          done
+      - run: dotnet run --project tests/DotnetCrptPortfel.Tests --no-build
+      - run: dotnet run --project tests/App.Tests --no-build
+      - run: pnpm --dir frontend install --frozen-lockfile
+      - run: pnpm --dir frontend build
+      - run: pnpm --dir frontend exec playwright install --with-deps chromium
+      - name: Start demo with Docker Compose
+        env:
+          PORTFEL_ENVIRONMENT: Development
+          PORTFEL_DEMO: 'true'
+        run: docker compose up --build -d
+      - name: Run UI and HTTP smoke tests
+        run: |
+          curl --fail --silent --retry 20 --retry-all-errors --retry-delay 1 http://127.0.0.1:5080/api/v1/health/ready
+          pnpm --dir frontend test:e2e
