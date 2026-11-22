@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using Portfel.CoinMarketCap;
 
 namespace DotnetCrptPortfel;
 
@@ -8,14 +9,17 @@ internal static class Program
     private const string Help =
         "Usage:\n" +
         "  dotnetCrptPortfel value <holdings.tsv> <quotes.tsv> --currency <CODE> --as-of <UNIX_SECONDS> --max-age <SECONDS>\n" +
+        "  dotnetCrptPortfel cmc-chart <slug>\n" +
         "\n" +
         "  --currency   Currency of the valuation (for example USD)\n" +
         "  --as-of      Valuation time in Unix seconds\n" +
         "  --max-age    Maximum age of a quote in seconds, inclusive\n" +
         "\n" +
-        "Exit status: 0 for a complete valuation, 2 for a partial valuation, 1 for an error.\n";
+        "  cmc-chart    Fetch CoinMarketCap platformInfo and the all-time weekly USD chart as JSON.\n" +
+        "\n" +
+        "Exit status: 0 for success, 2 for a partial valuation, 1 for an error.\n";
 
-    private static int Main(string[] args)
+    private static async Task<int> Main(string[] args)
     {
         Console.OutputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
         TextWriter output = Console.Out;
@@ -25,9 +29,24 @@ internal static class Program
         string writeContext = "help";
         try
         {
-            if (args is [] or ["--help" or "-h"] or ["value", "--help" or "-h"])
+            if (args is [] or ["--help" or "-h"] or ["value" or "cmc-chart", "--help" or "-h"])
             {
                 output.Write(Help);
+                output.Flush();
+                return 0;
+            }
+
+            if (args is ["cmc-chart", ..])
+            {
+                if (args is not [_, var slug])
+                {
+                    throw new FormatException("expected 'cmc-chart <slug>'; see --help");
+                }
+
+                using var http = CoinMarketCapChart.CreateClient();
+                string json = await CoinMarketCapChart.FetchAsync(http, slug);
+                writeContext = "CoinMarketCap chart";
+                output.WriteLine(json);
                 output.Flush();
                 return 0;
             }
@@ -42,7 +61,7 @@ internal static class Program
             output.Flush();
             return report.IsComplete ? 0 : 2;
         }
-        catch (Exception error) when (error is FormatException or OverflowException)
+        catch (Exception error) when (error is FormatException or OverflowException or CoinMarketCapException)
         {
             Console.Error.WriteLine($"error: {error.Message}");
             return 1;

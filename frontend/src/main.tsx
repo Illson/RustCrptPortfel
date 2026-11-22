@@ -1,10 +1,12 @@
-import { BotIcon, CalendarDaysIcon, CableIcon, LayoutListIcon, LogOutIcon, MoonIcon, SettingsIcon, SunIcon, WalletIcon } from 'lucide-react'
+import { ActivityIcon, BotIcon, CalendarDaysIcon, CableIcon, LayoutListIcon, LogOutIcon, MoonIcon, SettingsIcon, SunIcon, WalletIcon } from 'lucide-react'
 import { type MouseEvent, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { Alert, AlertDescription, AlertTitle, Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Sidebar,
+import { Badge, Button, Card, CardContent, CardDescription, CardHeader, Sidebar,
   SidebarContent, SidebarFooter, SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger,
   useSidebar } from '@/components/ui/primitives'
 import { AssetPage } from '@/components/asset'
+import { CsvPortfolios, csvPortfoliosPath } from '@/components/csv-portfolios'
+import { CmcMonitorPage, cmcMonitorPath, cmcRequestsPath } from '@/components/cmc-monitor'
 import { Feed } from '@/components/feed'
 import { Calendar, Dashboard } from '@/components/portfolio'
 import { AiPage, SettingsPage, Sources } from '@/components/settings'
@@ -17,6 +19,7 @@ const navigation = [
   { path: '/feed', name: 'Лента', icon: LayoutListIcon },
   { path: '/calendar', name: 'Календарь', icon: CalendarDaysIcon },
   { path: '/sources', name: 'Источники', icon: CableIcon },
+  { path: cmcMonitorPath, name: 'Мониторинг запросов', icon: ActivityIcon },
   { path: '/ai', name: 'AI-подключения', icon: BotIcon },
   { path: '/settings', name: 'Настройки', icon: SettingsIcon },
 ]
@@ -37,12 +40,14 @@ function Login({ state, onLogin }: { state: Session; onLogin: () => Promise<void
   }
   return <main className="grid min-h-svh place-items-center bg-muted/35 p-4">
     <div className="grid w-full max-w-md gap-5"><Brand />
-      <Card><CardHeader><CardTitle className="text-2xl tracking-tight">Вход в приложение</CardTitle><CardDescription>Анализ активов вашего портфеля CoinMarketCap.</CardDescription></CardHeader>
+      <Card>
+        <CardHeader>
+          <h1 className="text-2xl font-semibold tracking-tight">Портфели</h1>
+          <CardDescription>Загрузите свои остатки из CSV или ZIP. Для этого не нужен аккаунт.</CardDescription>
+        </CardHeader>
         <CardContent className="grid gap-4">
-          <Button disabled className="w-full">Войти через CoinMarketCap</Button>
-          <Alert><AlertTitle>Вход через CoinMarketCap пока недоступен</AlertTitle><AlertDescription><span className="font-mono text-xs">{state.authentication}</span></AlertDescription></Alert>
-          <Alert><AlertTitle>Чтение личного портфеля пока недоступно</AlertTitle><AlertDescription><span className="font-mono text-xs">{state.portfolio_access}</span></AlertDescription></Alert>
-          {state.demo_available && <Button variant="outline" className="w-full" onClick={() => void demo()} disabled={busy}>Открыть демо-портфель</Button>}
+          <Button asChild className="w-full"><a href={csvPortfoliosPath}>Открыть свои портфели</a></Button>
+          {state.demo_available && <Button className="w-full" variant="outline" onClick={() => void demo()} disabled={busy}>Открыть демо-портфель</Button>}
           {error && <Warning title="Не удалось войти">{error}</Warning>}
         </CardContent>
       </Card>
@@ -81,7 +86,8 @@ function Workspace({ onLogout }: { onLogout: () => Promise<void> }) {
   }
 
   const matched = path.match(/^\/assets\/(\d+)$/)
-  const active = path === '/' || matched ? '/' : path
+  const monitor = path === cmcMonitorPath || path === cmcRequestsPath
+  const active = path === '/' || matched ? '/' : monitor ? cmcMonitorPath : path
   const title = navigation.find(item => item.path === active)?.name ?? 'Портфель'
   return <>
     <Sidebar>
@@ -92,7 +98,10 @@ function Workspace({ onLogout }: { onLogout: () => Promise<void> }) {
             <Icon aria-hidden /><span>{name}</span>
           </a>
         </SidebarMenuButton></SidebarMenuItem>)}</SidebarMenu></nav></SidebarContent>
-      <SidebarFooter className="border-t"><Button className="w-full justify-start" variant="ghost" onClick={() => void logout()}><LogOutIcon />Выйти</Button></SidebarFooter>
+      <SidebarFooter className="border-t">
+        <Button asChild variant="outline"><a href={csvPortfoliosPath}>Свои портфели из файлов</a></Button>
+        <Button className="w-full justify-start" variant="ghost" onClick={() => void logout()}><LogOutIcon />Выйти</Button>
+      </SidebarFooter>
     </Sidebar>
     <div className="min-w-0 flex-1">
       <header className="sticky top-0 z-20 flex h-14 items-center justify-between gap-2 border-b bg-background px-4 sm:px-6">
@@ -107,7 +116,8 @@ function Workspace({ onLogout }: { onLogout: () => Promise<void> }) {
         {matched ? <AssetPage key={matched[1]} id={matched[1]} timezone={timezone} back={() => navigate('/')} /> :
           path === '/feed' ? <Feed timezone={timezone} /> : path === '/calendar' ? <Calendar timezone={timezone} /> :
           path === '/sources' ? <Sources timezone={timezone} /> : path === '/settings' ? <SettingsPage saved={value => setOverride(value.timezone)} /> :
-          path === '/ai' ? <AiPage /> : <Dashboard timezone={timezone} navigate={navigate} />}
+          path === '/ai' ? <AiPage /> : monitor ? <CmcMonitorPage journal={path === cmcRequestsPath} timezone={timezone} /> :
+          <Dashboard timezone={timezone} navigate={navigate} />}
       </main>
     </div>
   </>
@@ -123,4 +133,4 @@ function App() {
   return state.authenticated ? <SidebarProvider><Workspace onLogout={refresh} /></SidebarProvider> : <Login state={state} onLogin={refresh} />
 }
 
-createRoot(document.getElementById('root')!).render(<App />)
+createRoot(document.getElementById('root')!).render(location.pathname === csvPortfoliosPath ? <CsvPortfolios /> : <App />)

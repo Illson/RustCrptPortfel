@@ -204,7 +204,11 @@ public sealed class CoinGeckoSpotMarkets(HttpClient http, TimeProvider clock, st
 internal static class PublicSourceHttp
 {
     internal static async Task<SourceBatch> ReadAsync(HttpClient client, TimeProvider clock, Uri url, (string Name, string Value)? header,
-        Func<JsonElement, DateTimeOffset, SourceBatch> parse, CancellationToken ct)
+        Func<JsonElement, DateTimeOffset, SourceBatch> parse, CancellationToken ct) =>
+        await ReadAsync(client, clock, url, header, parse, SourceBatch.Failed, ct);
+
+    internal static async Task<T> ReadAsync<T>(HttpClient client, TimeProvider clock, Uri url, (string Name, string Value)? header,
+        Func<JsonElement, DateTimeOffset, T> parse, Func<string, DateTimeOffset, DateTimeOffset?, T> failed, CancellationToken ct)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         deadline.CancelAfter(TimeSpan.FromSeconds(20));
@@ -215,7 +219,7 @@ internal static class PublicSourceHttp
             using var response = await client.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
             DateTimeOffset now = clock.GetUtcNow();
             if (!response.IsSuccessStatusCode)
-                return SourceBatch.Failed(response.StatusCode switch
+                return failed(response.StatusCode switch
                 {
                     HttpStatusCode.Unauthorized => "authentication_required",
                     HttpStatusCode.Forbidden => "permission_denied",
@@ -227,10 +231,10 @@ internal static class PublicSourceHttp
             using var data = await JsonDocument.ParseAsync(body, new JsonDocumentOptions { MaxDepth = 40, AllowDuplicateProperties = false }, deadline.Token);
             return parse(data.RootElement, now);
         }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { return SourceBatch.Failed("provider_unavailable", clock.GetUtcNow()); }
-        catch (Exception error) when (error is HttpRequestException or IOException) { return SourceBatch.Failed("provider_unavailable", clock.GetUtcNow()); }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { return failed("provider_unavailable", clock.GetUtcNow(), null); }
+        catch (Exception error) when (error is HttpRequestException or IOException) { return failed("provider_unavailable", clock.GetUtcNow(), null); }
         catch (Exception error) when (error is JsonException or KeyNotFoundException or FormatException or InvalidOperationException)
-        { return SourceBatch.Failed("schema_error", clock.GetUtcNow()); }
+        { return failed("schema_error", clock.GetUtcNow(), null); }
     }
 
     internal static JsonElement Property(JsonElement data, string name) =>

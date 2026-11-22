@@ -57,6 +57,7 @@ public sealed class PortfelDb(DbContextOptions<PortfelDb> options) : DbContext(o
         version.Property(row => row.Data).HasColumnName("data");
         version.HasOne<PublicationRow>().WithMany().HasForeignKey(row => new { row.OwnerId, row.PublishKey })
             .IsRequired().OnDelete(DeleteBehavior.Cascade);
+        Migrations.CoinMarketCapCache.Configure(model);
     }
 }
 

@@ -29,6 +29,10 @@ internal static class Program
             AcceptsMaximumPriceAndTimestamp,
             RejectsPositionValueOverflow,
             RejectsSubtotalOverflow,
+            RejectsInvalidCoinMarketCapArguments,
+            CoinMarketCapChartTests.FetchesChartUsingCryptocurrencyId,
+            CoinMarketCapChartTests.RejectsInvalidPageWithoutFetchingChart,
+            CoinMarketCapChartTests.ReportsChartFailures,
         ];
 
         var failed = 0;
@@ -52,13 +56,13 @@ internal static class Program
 
     private static void ProvidesHelp()
     {
-        string[][] helpForms = [[], ["--help"], ["-h"], ["value", "--help"], ["value", "-h"]];
+        string[][] helpForms = [[], ["--help"], ["-h"], ["value", "--help"], ["value", "-h"], ["cmc-chart", "--help"]];
         foreach (var arguments in helpForms)
         {
             var result = Run(arguments);
             AssertEqual("", result.Error);
             AssertEqual(0, result.ExitCode);
-            foreach (var text in new[] { "dotnetCrptPortfel value", "--currency", "--as-of", "--max-age" })
+            foreach (var text in new[] { "dotnetCrptPortfel value", "--currency", "--as-of", "--max-age", "cmc-chart <slug>" })
             {
                 AssertContains(result.Output, text);
             }
@@ -216,6 +220,13 @@ internal static class Program
             HoldingsHeader + $"BTC\t{SmallestQuantity}\nETH\t{SmallestQuantity}\n",
             QuotesHeader + $"BTC\tUSD\t{MaximumPrice}\t1000\tfixture\nETH\tUSD\t0.00000001\t1000\tfixture");
         AssertError(fixture.Value(), "subtotal exceeds");
+    }
+
+    private static void RejectsInvalidCoinMarketCapArguments()
+    {
+        AssertError(Run("cmc-chart"), "expected 'cmc-chart <slug>'");
+        AssertError(Run("cmc-chart", "dash", "extra"), "expected 'cmc-chart <slug>'");
+        AssertError(Run("cmc-chart", "../dash"), "slug must use lowercase ASCII");
     }
 
     private static void AssertReport(Result result, int exitCode, params string[] rows)

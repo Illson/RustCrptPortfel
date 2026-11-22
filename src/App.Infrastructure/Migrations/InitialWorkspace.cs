@@ -35,5 +35,5 @@ public sealed class InitialWorkspace : Migration
 [DbContext(typeof(PortfelDb))]
 public sealed class WorkspaceModelSnapshot : ModelSnapshot
 {
-    protected override void BuildModel(ModelBuilder modelBuilder) => PersistentQueue.BuildQueueModel(modelBuilder);
+    protected override void BuildModel(ModelBuilder modelBuilder) => CoinMarketCapCache.BuildCacheModel(modelBuilder);
 }
