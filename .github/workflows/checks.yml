@@ -33,10 +33,9 @@ jobs:
       - run: pnpm --dir frontend install --frozen-lockfile
       - run: pnpm --dir frontend build
       - run: pnpm --dir frontend exec playwright install --with-deps chromium
-      - name: Start demo with Docker Compose
+      - name: Start local portfolio app with Docker Compose
         env:
           PORTFEL_ENVIRONMENT: Development
-          PORTFEL_DEMO: 'true'
         run: docker compose up --build -d
       - name: Run UI and HTTP smoke tests
         run: |

@@ -13,10 +13,7 @@ public static class Persistence
 {
     public static IServiceCollection AddPortfel(this IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
     {
-        bool demo = environment.IsDevelopment() && configuration.GetValue<bool>("Demo:Enabled");
-        services.AddSingleton(new DemoSettings(demo));
         services.AddSingleton(TimeProvider.System);
-        services.AddScoped<WorkspaceJobs>();
         services.AddLogging(logging => logging.AddFilter("Microsoft.EntityFrameworkCore.Database.Command", LogLevel.Warning)
             .AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning));
         string? path = configuration["Storage:DatabasePath"];

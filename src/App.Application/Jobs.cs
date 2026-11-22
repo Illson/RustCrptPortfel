@@ -1,7 +1,4 @@
 using System.Globalization;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 using Portfel.Domain;
 
 namespace Portfel.Application;
@@ -210,59 +207,4 @@ public sealed class WorkspaceJobs(IWorkspaceStore store, TimeProvider clock)
     {
         Jobs = state.Jobs.Select(item => item.Id == job.Id ? job : item).ToArray(),
     };
-}
-
-public sealed record DemoSettings(bool Enabled);
-
-public sealed class PortfolioWorker(IServiceScopeFactory scopes, DemoSettings demo, TimeProvider clock,
-    ILogger<PortfolioWorker> logger) : BackgroundService
-{
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        if (!demo.Enabled) return;
-        DateTimeOffset nextSchedule = DateTimeOffset.MinValue;
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            await using AsyncServiceScope scope = scopes.CreateAsyncScope();
-            WorkspaceJobs jobs = scope.ServiceProvider.GetRequiredService<WorkspaceJobs>();
-            try
-            {
-                if (clock.GetUtcNow() >= nextSchedule)
-                {
-                    await ScheduleAsync(scope.ServiceProvider, jobs, stoppingToken);
-                    nextSchedule = clock.GetUtcNow().AddSeconds(30);
-                }
-                Job? job = await jobs.ClaimAsync(DemoPortfolio.Owner, stoppingToken);
-                if (job is not null)
-                {
-                    try { await jobs.ExecuteDemoAsync(DemoPortfolio.Owner, job, stoppingToken); }
-                    catch (Exception) when (!stoppingToken.IsCancellationRequested)
-                    {
-                        logger.LogWarning("Job {JobId} failed during execution.", job.Id);
-                        await jobs.FailAsync(DemoPortfolio.Owner, job, stoppingToken);
-                    }
-                }
-            }
-            catch (Exception) when (!stoppingToken.IsCancellationRequested)
-            {
-                logger.LogWarning("The worker could not access its queue.");
-            }
-            await Task.Delay(TimeSpan.FromSeconds(1), clock, stoppingToken);
-        }
-    }
-
-    private async Task ScheduleAsync(IServiceProvider services, WorkspaceJobs jobs, CancellationToken cancellationToken)
-    {
-        Workspace state = await services.GetRequiredService<IWorkspaceStore>().ReadAsync(DemoPortfolio.Owner, cancellationToken);
-        if (!state.Settings.ScheduleEnabled || state.Current is null) return;
-        DateTimeOffset now = clock.GetUtcNow();
-        DateTimeOffset local = TimeZoneInfo.ConvertTime(now, TimeZoneInfo.FindSystemTimeZoneById(state.Settings.Timezone));
-        if (TimeOnly.FromDateTime(local.DateTime) < TimeOnly.ParseExact(state.Settings.DailyTime, "HH:mm", CultureInfo.InvariantCulture)) return;
-        foreach (Position position in state.Current.Positions.Where(item => item.IsSpot != false))
-        {
-            string key = FormattableString.Invariant($"daily:{local:yyyy-MM-dd}:{position.AssetId}");
-            if (state.Jobs.All(item => item.IdempotencyKey != key))
-                await jobs.QueueAsync(DemoPortfolio.Owner, JobKind.AssetAnalysis, position.AssetId, key, true, cancellationToken);
-        }
-    }
 }

@@ -1,6 +1,6 @@
 # dotnetCrptPortfel
 
-Веб-приложение для анализа криптопортфеля. ASP.NET Core API и отдельный worker работают на .NET 11 с Runtime Async V2. Интерфейс — React, TypeScript, Vite и shadcn/ui. Docker Compose запускает frontend, API и worker. SQLite хранит состав, задания, настройки и версии ленты в одном локальном файле; отдельный сервер БД не нужен.
+Веб-приложение для ведения и оценки криптопортфелей. ASP.NET Core API работает на .NET 11 с Runtime Async V2, интерфейс — React, TypeScript, Vite и shadcn/ui. Остатки портфелей хранятся в браузере; SQLite хранит кэш истории CoinMarketCap и журнал обращений к нему.
 
 Для работы с кодом: [навигатор по задачам и тестам](docs/agents/README.md) · [правила для агентов](AGENTS.md).
 
@@ -16,60 +16,41 @@
 .\local.cmd stop
 ```
 
-Запуск открывает [127.0.0.1:5080](http://127.0.0.1:5080). Docker не нужен. Скрипт использует SQLite и подхватывает переносимые `node.exe` и `pnpm.cmd` из `.portfel/tools/`, если они там есть. Добавьте `-NoBrowser`, чтобы не открывать браузер. Тесты используют отдельный экземпляр (порт `5081` по умолчанию), отдельный файл БД и Chromium; установленный Edge можно выбрать через `PORTFEL_E2E_CHANNEL=msedge`. Другой порт задаётся через `-Port`.
+Запуск открывает [127.0.0.1:5080](http://127.0.0.1:5080). Docker не нужен. Скрипт использует SQLite и ищет переносимые `node.exe` и `pnpm.cmd` в `.portfel/tools/` рабочего каталога и основного Git-репозитория. Добавьте `-NoBrowser`, чтобы не открывать браузер. Тесты используют отдельный экземпляр (порт `5081` по умолчанию), отдельный файл БД и Chromium; установленный Edge можно выбрать через `PORTFEL_E2E_CHANNEL=msedge`. Другой порт задаётся через `-Port`.
 
-**Открыть свои портфели** позволяет импортировать остатки из CSV/ZIP и оценить их в USD по CoinGecko. Остатки сохраняются в браузере. **Открыть демо-портфель** запускает отдельную учебную рабочую область. [Правила импорта](docs/csv-portfolios.md) · [Правила оценки](docs/live-valuation.md).
+**Запуск без Node.js:** положите готовый интерфейс в `frontend/dist` и выполните `.\local.cmd -NoNode`. ASP.NET Core раздаёт эти файлы; Node.js и pnpm на машине запуска не нужны, нужен SDK .NET. Сборка React-интерфейса по-прежнему требует Node.js: `pnpm --dir frontend install --frozen-lockfile`, затем `pnpm --dir frontend build`. После изменения интерфейса соберите `frontend/dist` заново. `.\local.cmd test -NoNode` проверяет .NET и раздачу готовой страницы, но не запускает Playwright.
 
-В демо раздел **Мониторинг запросов** показывает кэш истории CoinMarketCap и журнал внешних попыток. Просмотр страниц не расходует лимит. [Контракт и лимиты](docs/coinmarketcap-history.md). В окне `local.cmd` видны начало, результат, кэш и лимиты обращений API к источникам; тела ответов и данные портфеля не выводятся. Файлы логов остаются в `.portfel/local/`.
+На главной открыт **локальный профиль** со своими портфелями из CSV/ZIP. Переключатель в шапке открывает отдельный портфель или сводку по выбранным. Есть поиск позиций, фильтр «Только без оценки» и подсказки. [Профиль](docs/portfolio-profile.md) · [Импорт](docs/csv-portfolios.md) · [Оценка](docs/live-valuation.md).
+
+Раздел **Мониторинг запросов** открывает общий журнал CoinGecko и CoinMarketCap: HTTP-коды источника, результат и краткий ответ. Полный график можно открыть из кэша, не делая внешний запрос. [Контракт и лимиты](docs/coinmarketcap-history.md). В окне `local.cmd` видны начало, результат, кэш и лимиты обращений; HTML, JSON и данные портфеля не выводятся. Файлы логов остаются в `.portfel/local/`.
 
 ### Docker Compose
 
 ```powershell
 Copy-Item .env.example .env
-docker compose up --build
+docker compose up --build --remove-orphans
 ```
 
-Откройте [сайт](http://localhost:5080) и нажмите **Открыть демо-портфель**. Демо работает только в Development с `Demo__Enabled=true`. Первая синхронизация ставит задания анализа в очередь. Ссылки на учебные источники и карточки помечены в интерфейсе.
+Откройте [сайт](http://127.0.0.1:5080) и нажмите **Открыть свои портфели**. Compose запускает frontend и API. `--remove-orphans` останавливает оставшийся от старой версии worker, не удаляя том с БД. Для рыночных инструментов на локальном хосте оставьте `PORTFEL_ENVIRONMENT=Development`.
 
-Для запуска без Docker нужны SDK .NET `11.0.100`, Node `24.22.3` и pnpm `11.25.0`. Соберите `pnpm --dir frontend install --frozen-lockfile` и `pnpm --dir frontend build`. В обоих терминалах из корня проекта задайте:
+Для ручного запуска соберите `pnpm --dir frontend install --frozen-lockfile` и `pnpm --dir frontend build`. Из корня проекта:
 
 ```powershell
 $env:DOTNET_ENVIRONMENT = 'Development'
-$env:Demo__Enabled = 'true'
 $env:Storage__DatabasePath = Join-Path $PWD '.portfel/portfel.db'
-```
-
-В обоих процессах используйте один абсолютный `Storage__DatabasePath`. В Production путь обязателен. В Compose оба процесса используют `/data/portfel.db` в томе `data`; при обновлении сохраните прежнее имя Compose-проекта, чтобы подключить тот же том.
-
-Запустите worker в первом терминале и API во втором:
-
-```powershell
-dotnet run --project src/App.Worker
-```
-
-```powershell
 $env:Frontend__Directory = Join-Path $PWD 'frontend/dist'
 $env:Security__KeyDirectory = Join-Path $PWD '.portfel/keys'
 dotnet run --project src/App.Api --urls http://127.0.0.1:5080
 ```
 
-EF Core применяет миграции при запуске под блокировкой записи SQLite. При обновлении старого файла миграция переносит задания и версии карточек из JSON в таблицы SQLite, сохраняя идентификаторы, прочитанность и даты. Если миграция прерывается, незавершённая транзакция откатывается, а повторный запуск пробует снова. Ключи идемпотентности и публикаций уникальны на уровне БД. Снимок, версия карточки и статус задания фиксируются одной транзакцией. Точные числа хранятся строками. `GET /api/v1/health/ready` проверяет наличие таблиц; контракт API доступен на `/openapi/v1.json`.
-
-Для `GET /feed`, `/assets/{id}` и `/assets/{id}/analyses` доступны два представления. Префикс `/api/v1` сохраняет прежний `analysis` (`title`, `importance`, блоки `economy` и `development`); фильтр `importance=normal` включает `info` и `watch`. Интерфейс читает эти три маршрута через `/api/v2` (`headline`, `severity`, блоки `economics` и `project`). Авторизация одинакова; запись и остальные запросы остаются на `/api/v1`.
-
-SQLite рассчитан на один хост: режим WAL требует общего локального диска, а не NFS или раздельных томов для API и worker. Перед обновлением остановите оба процесса и сохраните копию данных (`docker compose stop`, не `down -v`). Не копируйте только `.db`, пока на него пишет процесс; для работающего приложения используйте SQLite backup API.
-
-Пока не выпущена первая версия, откат базы для запуска старой сборки не входит в контракт. Ожидая задания, worker читает только активную очередь по частичному индексу SQLite, без блокировки записи и без загрузки истории ленты.
-
-Compose публикует только frontend на `127.0.0.1`. Для внешнего размещения нужны HTTPS и приватное хранение ключей Data Protection: `Security__KeyDirectory`, при необходимости PKCS#12 через `Security__KeyCertificatePath` и `Security__KeyCertificatePassword`. Ни параметр демо, ни рыночный ключ не открывают доступ к данным в Production.
+EF Core применяет миграции при запуске. Прежние таблицы и записи не удаляются. В Compose API использует `/data/portfel.db` в томе `data`; сохраняйте имя проекта и не удаляйте том при обновлении. `GET /api/v1/health/ready` проверяет БД, контракт доступен на `/openapi/v1.json`. Рыночные маршруты включены только в Development, их не следует публиковать наружу.
 
 ### Статус реализации
 
-- `BLOCKED_CMC_AUTH` — официальный контракт входа для приложения не подтверждён. `BLOCKED_CMC_ACCESS` — разрешённое чтение личного портфеля не подтверждено. Подтверждение и тесты с реальным портфелем остаются отдельными задачами. [CMC API](https://coinmarketcap.com/api/documentation/guides/authentication/) · [CMC MCP](https://coinmarketcap.com/api/mcp/)
-- Работают учебная синхронизация, портфель, экран актива, четыре блока данных, календарь, лента, версии и замечания к карточкам, постановка и отмена заданий, настройки расписания. Демо не запускает платный AI и не использует реальные позиции.
-- Реализованы и проверены на синтетических HTTP-ответах адаптеры CMC Market Data, DefiLlama Free, CoinGecko Pro, OpenAI Responses, Anthropic Messages, OpenAI-compatible и HTTP/SSE inference плана ChatGPT. Рабочая синхронизация, ввод AI-ключей и OAuth ChatGPT не включены. Детали и оставшиеся работы — в [ревью ТЗ](docs/review-tz-1.1.md).
+- Используются импорт остатков и публичные рыночные данные. Вход в аккаунт CoinMarketCap, чтение личных позиций через сервис и AI-аналитика не подключены.
+- Учебный интерфейс, его API и worker больше не входят в запуск. Тестовые сценарии и миграции сохранены для регрессий SQLite и старых данных. [История решений](docs/review-tz-1.1.md).
 - Интерфейс использует нейтральный preset `nova` с Radix, созданный `shadcn@4.23.0 init --preset nova --base radix --template vite --no-monorepo`.
-- [API](src/App.Api), [worker](src/App.Worker), [расчёты и контракты](src/App.Domain), [сценарии и учебный набор](src/App.Application), [миграции и адаптеры](src/App.Infrastructure), [frontend](frontend).
+- [API](src/App.Api), [миграции и рыночные адаптеры](src/App.Infrastructure), [интерфейс](frontend), [точные расчёты сводки](frontend/src/lib/portfolio-valuation.ts).
 
 ### Проверки веб-приложения
 
@@ -83,7 +64,7 @@ pnpm --dir frontend exec playwright install chromium
 pnpm --dir frontend test:e2e
 ```
 
-Тесты хранилища используют отдельные временные файлы SQLite. UI-тесты требуют запущенный экземпляр Development с демонстрационным worker и отдельными данными. По умолчанию тестируют `http://127.0.0.1:5080`; другой адрес можно передать через `PORTFEL_E2E_URL`, установленный браузер — через `PORTFEL_E2E_CHANNEL` (`msedge` / `chrome`).
+Тесты хранилища используют отдельные временные файлы SQLite. UI-тесты требуют запущенный экземпляр Development с отдельными данными. По умолчанию тестируют `http://127.0.0.1:5080`; другой адрес можно передать через `PORTFEL_E2E_URL`, установленный браузер — через `PORTFEL_E2E_CHANNEL` (`msedge` / `chrome`).
 
 ## Режим CLI
 

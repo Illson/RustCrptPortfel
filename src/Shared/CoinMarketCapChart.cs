@@ -50,7 +50,8 @@ internal static partial class CoinMarketCapChart
         pageRequest.Headers.Accept.ParseAdd("text/html");
         pageRequest.Headers.AcceptLanguage.ParseAdd("ru,en;q=0.9");
         string html = await GetAsync(http, pageRequest, "coin page", ct);
-        return ReadPlatformInfo(html);
+        try { return ReadPlatformInfo(html); }
+        catch (CoinMarketCapException error) { error.Status = HttpStatusCode.OK; throw; }
     }
 
     internal static async Task<JsonElement> FetchChartAsync(HttpClient http, int cryptoId, CancellationToken ct)
@@ -64,20 +65,21 @@ internal static partial class CoinMarketCapChart
         chartRequest.Headers.Referrer = new Uri(Site);
         string chartJson = await GetAsync(http, chartRequest, "chart", ct);
         if (chartJson.Length > 2 * 1024 * 1024)
-            throw new CoinMarketCapException("CoinMarketCap chart response is too large");
+            throw new CoinMarketCapException("CoinMarketCap chart response is too large") { Status = HttpStatusCode.OK, FailureKind = "too_large" };
 
-        using JsonDocument chart = ParseJson(chartJson, "chart response");
+        using JsonDocument chart = ParseJson(chartJson, "chart response", HttpStatusCode.OK);
         JsonElement errorCode = Property(Property(chart.RootElement, "status"), "error_code");
         if (!(errorCode.ValueKind == JsonValueKind.String && errorCode.ValueEquals("0") ||
               errorCode.ValueKind == JsonValueKind.Number && errorCode.TryGetInt32(out int code) && code == 0))
         {
-            throw new CoinMarketCapException("CoinMarketCap chart response does not report success (status.error_code must be 0)");
+            throw new CoinMarketCapException("CoinMarketCap chart response does not report success (status.error_code must be 0)")
+            { Status = HttpStatusCode.OK, FailureKind = "provider_error" };
         }
 
         JsonElement points = Property(Property(chart.RootElement, "data"), "points");
         if (points.ValueKind != JsonValueKind.Array || points.GetArrayLength() == 0)
         {
-            throw new CoinMarketCapException("CoinMarketCap chart response is missing nonempty data.points");
+            throw new CoinMarketCapException("CoinMarketCap chart response is missing nonempty data.points") { Status = HttpStatusCode.OK };
         }
 
         return chart.RootElement.Clone();
@@ -144,7 +146,7 @@ internal static partial class CoinMarketCapChart
             ? value
             : default;
 
-    private static JsonDocument ParseJson(string text, string stage)
+    private static JsonDocument ParseJson(string text, string stage, HttpStatusCode? status = null)
     {
         try
         {
@@ -152,33 +154,45 @@ internal static partial class CoinMarketCapChart
         }
         catch (JsonException error)
         {
-            throw new CoinMarketCapException($"CoinMarketCap {stage} is not valid JSON", error);
+            throw new CoinMarketCapException($"CoinMarketCap {stage} is not valid JSON", error) { Status = status, FailureKind = "invalid_json" };
         }
     }
 
     private static async Task<string> GetAsync(HttpClient http, HttpRequestMessage request, string stage, CancellationToken ct)
     {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(Timeout);
+        HttpStatusCode? status = null;
         try
         {
-            using HttpResponseMessage response = await http.SendAsync(request, ct);
+            using HttpResponseMessage response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
+            status = response.StatusCode;
             if (response.StatusCode != HttpStatusCode.OK)
             {
                 throw new CoinMarketCapException($"CoinMarketCap {stage} returned HTTP {(int)response.StatusCode}")
                 {
                     Status = response.StatusCode,
                     RetryAfter = response.Headers.RetryAfter,
+                    FailureKind = "http_error",
                 };
             }
 
-            return await response.Content.ReadAsStringAsync(ct);
+            await response.Content.LoadIntoBufferAsync(http.MaxResponseContentBufferSize, deadline.Token);
+            return await response.Content.ReadAsStringAsync(deadline.Token);
         }
         catch (HttpRequestException error)
         {
-            throw new CoinMarketCapException($"CoinMarketCap {stage} request failed: {error.Message}", error);
+            throw new CoinMarketCapException($"CoinMarketCap {stage} request failed: {error.Message}", error)
+            { Status = status ?? error.StatusCode, FailureKind = "transport_error" };
+        }
+        catch (IOException error)
+        {
+            throw new CoinMarketCapException($"CoinMarketCap {stage} could not read the response", error)
+            { Status = status, FailureKind = "transport_error" };
         }
         catch (OperationCanceledException error) when (!ct.IsCancellationRequested)
         {
-            throw new CoinMarketCapException($"CoinMarketCap {stage} request timed out", error);
+            throw new CoinMarketCapException($"CoinMarketCap {stage} request timed out", error) { Status = status, FailureKind = "timeout" };
         }
     }
 
@@ -191,6 +205,7 @@ internal sealed record CoinMarketCapPlatform(JsonElement Info, int CryptoId);
 
 internal sealed class CoinMarketCapException(string message, Exception? inner = null) : Exception(message, inner)
 {
-    internal HttpStatusCode? Status { get; init; }
+    internal HttpStatusCode? Status { get; set; }
     internal RetryConditionHeaderValue? RetryAfter { get; init; }
+    internal string FailureKind { get; init; } = "invalid_response";
 }

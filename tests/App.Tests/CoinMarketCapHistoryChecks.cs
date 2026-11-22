@@ -16,6 +16,7 @@ internal static class CoinMarketCapHistoryChecks
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         bool fail = false;
+        bool malformed = false;
         bool interrupted = false;
         using var http = new HttpClient(new MockHttp(async (request, ct) =>
         {
@@ -31,6 +32,7 @@ internal static class CoinMarketCapHistoryChecks
                     started.SetResult();
                     await release.Task.WaitAsync(ct);
                 }
+                if (malformed) return MockHttp.Reply("<html>fixture</html>", media: "text/html");
                 return MockHttp.Reply("""
                     <script id="__NEXT_DATA__">
                     {"props":{"pageProps":{"detailRes":{"popularCryptoInfo":{"platformInfo":{"id":161,"cryptocurrencyId":131}}}}}}
@@ -73,6 +75,8 @@ internal static class CoinMarketCapHistoryChecks
         var discovery = await first;
         Require(discovery is { Status: 202, State: "platform_cached" } && discovery.NextAttemptAt == now.AddSeconds(30),
             "First GET persists the platform and separates the two upstream requests");
+        Require((await Monitor()).Requests[0].Response!.Value.GetProperty("cryptocurrency_id").GetInt32() == 131,
+            "Persist a small lookup response, not the HTML");
         clock.Now = now.AddSeconds(29);
         Require((await Chart("other")).Status == 429 && (await Chart("dash")).Status == 429 && upstream.Count == 1,
             "Both upstream endpoints share one cooldown even with new DbContexts");
@@ -80,6 +84,14 @@ internal static class CoinMarketCapHistoryChecks
         var fresh = await Chart("dash");
         Require(fresh is { Status: 200, State: "refreshed" } && fresh.FetchedAt == clock.Now &&
             fresh.Json!.Contains(price, StringComparison.Ordinal), "Platform survives reopen and chart keeps numeric precision");
+        await using (var db = open())
+        {
+            var history = new CoinMarketCapHistory(db, http, clock);
+            Require(await history.CachedChartAsync("dash", default) == fresh.Json && upstream.Count == 2,
+                "Reading full JSON from cache never starts an external request");
+        }
+        Require((await Monitor()).Requests[0].Response!.Value.GetProperty("points").GetInt32() == 1,
+            "Persist a chart summary, not another copy of the chart JSON");
 
         clock.Now = now.AddSeconds(60);
         var alias = await Chart("dash-alias");
@@ -97,6 +109,7 @@ internal static class CoinMarketCapHistoryChecks
         Require((await Chart("other")).NextAttemptAt == now.AddHours(1).AddSeconds(150), "Upstream Retry-After extends the persisted global pause");
         var monitor = await Monitor();
         Require(monitor.Requests.Length == 4 && monitor.Requests[0] is { Kind: "chart", Outcome: "rate_limited", HttpStatus: 429 } &&
+            monitor.Requests[0].Response!.Value.GetProperty("error").GetString() == "http_error" &&
             monitor.Coins.Single(coin => coin.Slug == "dash").FetchedAt == fresh.FetchedAt && upstream.Count == 4,
             "Monitoring shows persisted cache and external attempts only");
 
@@ -111,6 +124,11 @@ internal static class CoinMarketCapHistoryChecks
         interrupted = false;
         Require((await Chart("other")).Status == 202 && (await Monitor()).Requests[1].Outcome == "interrupted",
             "Next caller recovers expired global reservation");
+        clock.Now = clock.Now.AddSeconds(30);
+        malformed = true;
+        Require((await Chart("broken")).Status == 502 &&
+            (await Monitor()).Requests[0] is { Outcome: "failed", HttpStatus: 200, Response: { } response } &&
+            response.GetProperty("error").GetString() == "invalid_response", "Keep upstream HTTP 200 even if parsing fails");
         Require(upstream.Zip(upstream.Skip(1)).All(pair => pair.Second.At - pair.First.At >= TimeSpan.FromSeconds(30)),
             "Every actual GET was separated by at least 30 seconds");
         Console.WriteLine("PASS CoinMarketCap cache, rate limits, concurrency, precision and recovery");

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -10,9 +11,7 @@ namespace Portfel.Infrastructure;
 
 public sealed record CmcChartResult(string State, string? Json, DateTimeOffset? FetchedAt, DateTimeOffset? NextAttemptAt, int Status);
 public sealed record CmcCoinStatus(string Slug, bool HasPlatform, DateTimeOffset? FetchedAt, DateTimeOffset? NextAttemptAt);
-public sealed record CmcRequestStatus(string Id, string Slug, string Kind, string Outcome, int? HttpStatus,
-    DateTimeOffset StartedAt, DateTimeOffset? FinishedAt);
-public sealed record CmcMonitor(DateTimeOffset AsOf, DateTimeOffset? GlobalNextAttemptAt, CmcCoinStatus[] Coins, CmcRequestStatus[] Requests);
+public sealed record CmcMonitor(DateTimeOffset AsOf, DateTimeOffset? GlobalNextAttemptAt, CmcCoinStatus[] Coins, MarketRequestStatus[] Requests);
 
 public sealed class CoinMarketCapHistory(DbContext db, HttpClient http, TimeProvider clock, ILogger<CoinMarketCapHistory>? logger = null)
 {
@@ -47,17 +46,27 @@ public sealed class CoinMarketCapHistory(DbContext db, HttpClient http, TimeProv
         long started = Stopwatch.GetTimestamp();
         CoinMarketCapPlatform? platform = null;
         string? chart = null;
+        object? response = null;
         CoinMarketCapException? failure = null;
         bool cancelled = false;
         try
         {
             if (coin?.PlatformJson is not { } stored)
+            {
                 platform = await CoinMarketCapChart.FetchPlatformAsync(http, slug, ct);
+                response = new { cryptocurrency_id = platform.CryptoId };
+            }
             else
             {
                 var mapping = CoinMarketCapChart.ReadStoredPlatform(stored);
                 var raw = await CoinMarketCapChart.FetchChartAsync(http, mapping.CryptoId, ct);
                 chart = CoinMarketCapChart.Format(slug, mapping.Info, raw);
+                var points = raw.GetProperty("data").GetProperty("points");
+                response = new
+                {
+                    cryptocurrency_id = mapping.CryptoId, points = points.GetArrayLength(),
+                    first_timestamp = PointTimestamp(points[0]), last_timestamp = PointTimestamp(points[points.GetArrayLength() - 1]),
+                };
             }
         }
         catch (CoinMarketCapException error) { failure = error; }
@@ -76,9 +85,11 @@ public sealed class CoinMarketCapHistory(DbContext db, HttpClient http, TimeProv
         string outcome = failure?.Status == HttpStatusCode.TooManyRequests ? "rate_limited" :
             failure is not null ? "failed" : cancelled ? "cancelled" : "succeeded";
         int? status = failure?.Status is { } upstreamStatus ? (int)upstreamStatus : outcome == "succeeded" ? 200 : null;
+        response ??= new { error = failure?.FailureKind ?? "cancelled" };
         log.LogInformation("CoinMarketCap GET ({Stage}): {Outcome}, HTTP {Status}, {ElapsedMs:F0} ms, attempt {AttemptId}",
             stage, outcome, status?.ToString() ?? "-", Stopwatch.GetElapsedTime(started).TotalMilliseconds, id);
-        coinNext = await FinishAsync(id, slug, coin?.CryptoId, platform, chart, when, globalNext, coinNext, outcome, status);
+        coinNext = await FinishAsync(id, slug, coin?.CryptoId, platform, chart, when, globalNext, coinNext, outcome, status,
+            JsonSerializer.Serialize(response));
         ct.ThrowIfCancellationRequested();
 
         if (chart is not null) return new("refreshed", chart, At(Millis(when)), coinNext, 200);
@@ -102,10 +113,22 @@ public sealed class CoinMarketCapHistory(DbContext db, HttpClient http, TimeProv
             .ThenByDescending(row => row.Id).Take(100).ToArrayAsync(ct);
         return new(now, Future(gate.NextAt, now),
             coins.Select(row => new CmcCoinStatus(row.Slug, row.HasPlatform, At(row.FetchedAt), Future(row.NextAt, now))).ToArray(),
-            requests.Select(row => new CmcRequestStatus(row.Id, row.Slug, row.Kind,
+            requests.Select(row => new MarketRequestStatus(row.Id, row.Slug, row.Kind,
                 row.Outcome == "running" && gate.ActiveId == row.Id && gate.NextAt <= Millis(now) ? "interrupted" : row.Outcome,
-                row.HttpStatus, DateTimeOffset.FromUnixTimeMilliseconds(row.StartedAt), At(row.FinishedAt))).ToArray());
+                row.HttpStatus, DateTimeOffset.FromUnixTimeMilliseconds(row.StartedAt), At(row.FinishedAt), "CoinMarketCap",
+                row.ResponseJson is { } json ? JsonSerializer.Deserialize<JsonElement>(json) : null)).ToArray());
     }
+
+    public Task<string?> CachedChartAsync(string slug, CancellationToken ct)
+    {
+        if (!CoinMarketCapChart.ValidSlug(slug))
+            throw new AppFault("invalid_cmc_slug", "Некорректный slug CoinMarketCap.", 400);
+        return db.Set<CmcCoinRow>().AsNoTracking().Where(row => row.Slug == slug).Select(row => row.ChartJson).SingleOrDefaultAsync(ct);
+    }
+
+    private static long? PointTimestamp(JsonElement point) =>
+        point.ValueKind == JsonValueKind.Object && point.TryGetProperty("s", out var value) &&
+        value.ValueKind == JsonValueKind.String && long.TryParse(value.GetString(), out long seconds) && seconds > 0 ? seconds : null;
 
     private async Task<(CmcCoinRow? Coin, string? Id, DateTimeOffset? RetryAt)> ReserveAsync(string slug, CancellationToken ct)
     {
@@ -142,7 +165,7 @@ public sealed class CoinMarketCapHistory(DbContext db, HttpClient http, TimeProv
     }
 
     private async Task<DateTimeOffset?> FinishAsync(string id, string slug, int? cryptoId, CoinMarketCapPlatform? platform, string? chart,
-        DateTimeOffset when, DateTimeOffset globalNext, DateTimeOffset? coinNext, string outcome, int? status)
+        DateTimeOffset when, DateTimeOffset globalNext, DateTimeOffset? coinNext, string outcome, int? status, string responseJson)
     {
         // A disconnected caller must not prevent recording the attempt or its cooldown.
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -153,7 +176,8 @@ public sealed class CoinMarketCapHistory(DbContext db, HttpClient http, TimeProv
             """, ct);
         if (updated != 1) throw new AppFault("cmc_reservation_expired", "Резерв запроса CoinMarketCap истёк.", 503);
         await db.Database.ExecuteSqlAsync($"""
-            UPDATE cmc_requests SET outcome = {outcome}, http_status = {status}, finished_at = {Millis(when)} WHERE id = {id}
+            UPDATE cmc_requests SET outcome = {outcome}, http_status = {status}, finished_at = {Millis(when)},
+                response_json = {responseJson} WHERE id = {id}
             """, ct);
         if (platform is not null)
         {
@@ -188,4 +212,14 @@ public sealed class CoinMarketCapHistory(DbContext db, HttpClient http, TimeProv
 
 internal sealed record CmcGateRow(int Id, long NextAt, string? ActiveId);
 internal sealed record CmcCoinRow(string Slug, long NextAt, int? CryptoId, string? PlatformJson, string? ChartJson, long? FetchedAt);
-internal sealed record CmcRequestRow(string Id, string Slug, string Kind, string Outcome, int? HttpStatus, long StartedAt, long? FinishedAt);
+internal sealed class CmcRequestRow
+{
+    public required string Id { get; init; }
+    public required string Slug { get; init; }
+    public required string Kind { get; init; }
+    public required string Outcome { get; init; }
+    public int? HttpStatus { get; init; }
+    public long StartedAt { get; init; }
+    public long? FinishedAt { get; init; }
+    public string? ResponseJson { get; init; }
+}

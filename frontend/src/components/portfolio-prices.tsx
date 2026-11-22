@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { date, decimal, dollars, percent, request } from '@/lib/api'
+import { date, decimal, request } from '@/lib/api'
 import type { SummaryRow } from '@/lib/csv-portfolios'
 import { coinSuggestions, makeCoinIndex, quoteBatches, readMappings, resolveCoin, saveMapping, valuePortfolio,
   type Mapping, type MarketCoin, type UsdQuote } from '@/lib/portfolio-valuation'
-import { Button, Input, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/primitives'
+import { Button, Input } from './ui/primitives'
 import { ExternalLink, Warning } from './shared'
+import { PortfolioPositions, PortfolioValuation } from './portfolio-tools'
 
 const endpoint = '/public/market'
 const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -104,45 +105,38 @@ export function PortfolioPrices({ summary }: { summary: SummaryRow[] }) {
   }, [])
 
   const valuation = valuePortfolio(resolved, quotes, now)
-  const label = valuation.complete ? 'Общая стоимость' : 'Оценённая часть портфеля'
+  const hint = catalogLoading || refreshing ? undefined :
+    valuation.rows.some(row => row.status === 'unmapped') && !catalogError
+      ? 'Не все монеты распознаны. Включите «Только без оценки» и проверьте сопоставление по названию и тикеру.'
+      : valuation.rows.some(row => row.status === 'stale' || row.status === 'missing')
+        ? 'Для части позиций нет свежей цены. Можно обновить котировки; их отсутствие не означает нулевую стоимость.'
+        : undefined
   return <div className="grid min-w-0 gap-3">
-    <div className="flex flex-wrap items-start justify-between gap-3 rounded-md border p-3">
-      <div className="min-w-0">
-        <h2 className="text-base font-semibold">{label}: <span data-testid="portfolio-value" title={valuation.total ?? undefined}
-          className="break-all">{dollars(valuation.total)}</span></h2>
-        <p className="text-xs text-muted-foreground">Оценено позиций: {valuation.covered} из {valuation.rows.length}. Стоимость в USD.
-          {!valuation.complete && ' Доли появятся, когда будут оценены все позиции.'}</p>
-        <div className="mt-1 text-xs text-muted-foreground"><ExternalLink href="https://www.coingecko.com/en/api">Data provided by CoinGecko</ExternalLink></div>
-      </div>
-      <Button variant="outline" size="sm" disabled={catalogLoading || refreshing || (!ids && !catalogError)}
+    <PortfolioValuation total={valuation.total} covered={valuation.covered} count={valuation.rows.length} complete={valuation.complete}
+      hint={hint}
+      source={<ExternalLink href="https://www.coingecko.com/en/api">Data provided by CoinGecko</ExternalLink>}
+      action={<Button variant="outline" size="sm" disabled={catalogLoading || refreshing || (!ids && !catalogError)}
         onClick={() => catalog === null ? setCatalogRevision(value => value + 1) : setQuoteRevision(value => value + 1)}>
         {catalogLoading || refreshing ? 'Загрузка котировок…' : 'Обновить котировки'}
-      </Button>
-    </div>
+      </Button>} />
     {catalogError && <Warning title="Каталог CoinGecko недоступен">{catalogError}</Warning>}
     {quoteError && <Warning title="Не удалось обновить котировки">{quoteError}</Warning>}
     {initial.error && <Warning title="Сопоставления недоступны">{initial.error}</Warning>}
-    <Table aria-label="Сводка остатков">
-      <TableHeader><TableRow>{['Актив', 'Количество', 'Цена USD', 'Стоимость USD', 'Доля', 'Портфели'].map(title =>
-        <TableHead key={title}>{title}</TableHead>)}</TableRow></TableHeader>
-      <TableBody>{valuation.rows.map(({ row, coin, quote, status, value, share }) => <TableRow key={row.key}>
-        <TableCell className="whitespace-normal break-words">{row.name}
+    <PortfolioPositions rows={valuation.rows.map(({ row, coin, quote, status, value, share }) => ({
+      key: row.key, quantity: row.quantity, value, share, origins: row.portfolios,
+      search: [row.name, row.assetId ?? '', coin?.symbol ?? '', coin?.id ?? ''],
+      asset: <><span className="font-medium">{row.name}</span>
           {row.assetId && <div className="text-xs text-muted-foreground">{row.assetId}</div>}
           {status !== 'empty' && <CoinPicker row={row} coin={coin} coins={catalog ?? []}
             onPick={async id => setMappings(await saveMapping(row.mappingKeys, id))} />}
-        </TableCell>
-        <TableCell className="tabular-nums">{row.quantity}</TableCell>
-        <TableCell className="tabular-nums">
+      </>,
+      quote: <>
           {status === 'ok' && quote ? <div title={quote.usd}>{decimal(quote.usd, 8, 2)}</div> :
             <span className="text-muted-foreground">{status === 'empty' ? '—' : catalogLoading ? 'Загрузка…'
               : status === 'unmapped' ? 'Нет сопоставления' : status === 'stale' ? 'Устарела' : 'Нет котировки'}</span>}
           {quote && Number.isFinite(Date.parse(quote.as_of)) &&
             <time dateTime={quote.as_of} title={quote.as_of} className="text-xs text-muted-foreground">{date(quote.as_of, zone)}</time>}
-        </TableCell>
-        <TableCell className="tabular-nums" title={value ?? undefined}>{dollars(value)}</TableCell>
-        <TableCell className="tabular-nums">{percent(share)}</TableCell>
-        <TableCell className="whitespace-normal break-words">{row.portfolios.join(', ')}</TableCell>
-      </TableRow>)}</TableBody>
-    </Table>
+      </>,
+    }))} />
   </div>
 }

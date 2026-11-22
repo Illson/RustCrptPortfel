@@ -1,20 +1,19 @@
 import { useState } from 'react'
-import { applyImports, maxBatchFiles, maxFileBytes, parseHoldingsCsv, readBook, saveBook, suggestTarget, suggestedName,
-  summarizePortfolios, type ImportDraft, type Portfolio } from '@/lib/csv-portfolios'
+import { applyImports, maxBatchFiles, maxFileBytes, parseHoldingsCsv, saveBook, suggestTarget, suggestedName,
+  summarizePortfolios, type Book, type ImportDraft, type Portfolio } from '@/lib/csv-portfolios'
 import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input } from './ui/primitives'
 import { PortfolioPrices } from './portfolio-prices'
 import { Warning } from './shared'
+import { PortfolioHeading, PortfolioHints } from './portfolio-tools'
 
 export const csvPortfoliosPath = '/portfolios'
+export const pathForPortfolio = (id: string) => `${csvPortfoliosPath}?${new URLSearchParams({ portfolio: id })}`
 type ImportError = { file: string; message: string }
 type FileDraft = ImportDraft & { entryName?: string }
 
-export function CsvPortfolios() {
-  const [initial] = useState(() => {
-    try { return { book: readBook(), error: '' } }
-    catch (failure) { return { book: null, error: (failure as Error).message } }
-  })
-  const [book, setBook] = useState(initial.book)
+export function CsvPortfolios({ book, bookError, portfolioId, onSave, onOverview }: {
+  book: Book | null; bookError: string; portfolioId: string | null; onSave: (book: Book) => void; onOverview: () => void
+}) {
   const [drafts, setDrafts] = useState<FileDraft[]>([])
   const [fileErrors, setFileErrors] = useState<ImportError[]>([])
   const [excluded, setExcluded] = useState<string[]>([])
@@ -24,7 +23,8 @@ export function CsvPortfolios() {
   const [notice, setNotice] = useState('')
 
   const portfolios = book?.portfolios ?? []
-  const selected = portfolios.filter(portfolio => !excluded.includes(portfolio.id))
+  const active = portfolios.find(portfolio => portfolio.id === portfolioId)
+  const selected = portfolioId !== null ? (active ? [active] : []) : portfolios.filter(portfolio => !excluded.includes(portfolio.id))
   const summary = summarizePortfolios(selected, groupByName)
   const replacements = drafts.filter(draft => draft.targetId).length
 
@@ -80,7 +80,7 @@ export function CsvPortfolios() {
     try {
       const next = applyImports(book.portfolios, drafts, () => crypto.randomUUID())
       const saved = await saveBook(book, next)
-      setBook(saved)
+      onSave(saved)
       setDrafts([])
       setNotice(`Добавлено: ${drafts.length - replacements}. Обновлено: ${replacements}.`)
     } catch (failure) { setError((failure as Error).message) }
@@ -93,8 +93,9 @@ export function CsvPortfolios() {
     setError('')
     setNotice('')
     try {
-      setBook(await saveBook(book, book.portfolios.filter(item => item.id !== portfolio.id)))
+      onSave(await saveBook(book, book.portfolios.filter(item => item.id !== portfolio.id)))
       setExcluded(previous => previous.filter(id => id !== portfolio.id))
+      if (portfolioId === portfolio.id) onOverview()
       setNotice('Портфель удалён из браузера.')
     } catch (failure) { setError((failure as Error).message) }
     finally { setMode(null) }
@@ -104,12 +105,14 @@ export function CsvPortfolios() {
     setExcluded(previous => checked ? previous.filter(item => item !== id) : [...previous, id])
   }
 
-  return <main className="mx-auto grid max-w-6xl gap-5 p-4 sm:p-6">
-    <div className="flex flex-wrap items-start justify-between gap-3">
-      <div><h1 className="text-3xl font-semibold tracking-tight">Мои портфели</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Остатки из файлов остаются в браузере. Рыночные котировки в USD — от CoinGecko.</p></div>
-      <Button asChild variant="outline"><a href="/">На главную</a></Button>
-    </div>
+  return <div className="grid min-w-0 gap-5">
+    <PortfolioHeading title={active?.name ?? 'Мои портфели'} source="Локальные данные"
+      description="Остатки из файлов остаются в браузере. Рыночные котировки в USD — от CoinGecko.">
+      {portfolioId !== null && <Button variant="outline" onClick={onOverview}>Все мои портфели</Button>}
+    </PortfolioHeading>
+    <PortfolioHints>Чтобы обновить остатки, импортируйте новый снимок и выберите замену этого портфеля.
+      Для нескольких портфелей откройте сводку и отметьте нужные снимки.</PortfolioHints>
+    {book && portfolioId !== null && !active && <Warning title="Портфель не найден">Выберите другой сохранённый портфель или откройте сводку.</Warning>}
     <Card className="min-w-0">
       <CardHeader><CardTitle>Импорт остатков</CardTitle>
         <CardDescription>Выберите CSV с остатками (<code>Name,Amount</code> или <code>asset,quantity</code>) либо ZIP с <code>*_overview.csv</code>. История операций не импортируется.</CardDescription></CardHeader>
@@ -125,7 +128,7 @@ export function CsvPortfolios() {
         {fileErrors.length > 0 && <Warning title="Файлы пропущены"><ul className="list-disc space-y-1 pl-4">
           {fileErrors.map(({ file, message }, i) => <li key={i} className="break-words">{file}: {message}</li>)}
         </ul></Warning>}
-        {(initial.error || error) && <Warning title="Не удалось сохранить изменения">{initial.error || error}</Warning>}
+        {(bookError || error) && <Warning title="Не удалось сохранить изменения">{bookError || error}</Warning>}
         {drafts.length > 0 && <div className="grid min-w-0 gap-3">
           <h2 className="font-semibold">Проверка перед импортом</h2>
           {drafts.map((draft, i) => <fieldset key={i} disabled={!!mode} className="grid min-w-0 gap-2 rounded-md border p-3">
@@ -157,8 +160,8 @@ export function CsvPortfolios() {
         {notice && <p role="status" className="text-sm">{notice}</p>}
       </CardContent>
     </Card>
-    {portfolios.length > 0 && <>
-      <Card className="min-w-0">
+    {(active || portfolioId === null && portfolios.length > 0) && <>
+      {portfolioId === null && <Card className="min-w-0">
         <CardHeader><CardTitle>Сохранённые портфели</CardTitle><CardDescription>Отметьте портфели для сводки. Не выбирайте два портфеля с одними и теми же средствами.</CardDescription></CardHeader>
         <CardContent className="grid min-w-0 gap-2">
           {portfolios.map(portfolio => <div key={portfolio.id} className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-md border p-2">
@@ -171,19 +174,19 @@ export function CsvPortfolios() {
               onClick={() => void remove(portfolio)}>Удалить</Button>
           </div>)}
         </CardContent>
-      </Card>
+      </Card>}
       <Card className="min-w-0">
         <CardHeader><CardTitle>Сводка остатков</CardTitle>
           <CardDescription>Выбрано портфелей: {selected.length}. Активы с одинаковым ID объединяются. Названия без ID по умолчанию не объединяются.</CardDescription></CardHeader>
         <CardContent className="grid min-w-0 gap-3">
-          <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1"
+          {portfolioId === null && <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1"
             checked={groupByName} onChange={event => setGroupByName(event.target.checked)} />
             <span>Объединять позиции без ID по совпадающим названиям<br /><span className="text-xs text-muted-foreground">Включайте только если убедились, что это один и тот же актив.</span></span>
-          </label>
+          </label>}
           {summary.length === 0 ? <p className="text-sm text-muted-foreground">{selected.length ? 'В выбранных портфелях нет позиций.' : 'Выберите хотя бы один портфель.'}</p> :
             <PortfolioPrices summary={summary} />}
         </CardContent>
       </Card>
     </>}
-  </main>
+  </div>
 }

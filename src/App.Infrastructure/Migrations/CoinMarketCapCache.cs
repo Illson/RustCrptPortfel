@@ -86,5 +86,6 @@ public sealed class CoinMarketCapCache : Migration
         request.Property(row => row.HttpStatus).HasColumnName("http_status").HasColumnType(Integer);
         request.Property(row => row.StartedAt).HasColumnName("started_at").HasColumnType(Integer);
         request.Property(row => row.FinishedAt).HasColumnName("finished_at").HasColumnType(Integer);
+        request.Ignore(row => row.ResponseJson);
     }
 }
