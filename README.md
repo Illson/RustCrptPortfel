@@ -2,6 +2,8 @@
 
 Веб-приложение для анализа криптопортфеля. ASP.NET Core API и отдельный worker работают на .NET 11 с Runtime Async V2. Интерфейс — React, TypeScript, Vite и shadcn/ui. Docker Compose запускает frontend, API и worker. SQLite хранит состав, задания, настройки и версии ленты в одном локальном файле; отдельный сервер БД не нужен.
 
+Для работы с кодом: [навигатор по задачам и тестам](docs/agents/README.md) · [правила для агентов](AGENTS.md).
+
 ## Запуск сайта
 
 ```powershell
