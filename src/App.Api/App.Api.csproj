@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <ItemGroup>
+    <ProjectReference Include="../App.Infrastructure/App.Infrastructure.csproj" />
+    <Content Include="../../docs/openapi.json" Link="openapi.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="Exists('../../docs/openapi.json')" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,6 @@
+asset	currency	price	timestamp	source
+BTC	USD	79000	1700000000	synthetic
+BTC	USD	80000.12345678	1700000600	synthetic
+ETH	USD	2000	1700000700	synthetic
+BTC	EUR	75000	1700000800	synthetic
+BTC	USD	81000	1700001000	synthetic

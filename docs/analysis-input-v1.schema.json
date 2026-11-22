@@ -1,0 +1,164 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AnalysisInputV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "asset_id",
+    "as_of",
+    "portfolio_hash",
+    "evidence",
+    "research",
+    "demo"
+  ],
+  "properties": {
+    "schema_version": {
+      "enum": [
+        "v1"
+      ]
+    },
+    "asset_id": {
+      "type": "string"
+    },
+    "as_of": {
+      "type": "string"
+    },
+    "portfolio_hash": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "asset_id",
+          "source_id",
+          "url",
+          "title",
+          "checked_at",
+          "metric_key",
+          "value_decimal",
+          "unit",
+          "period",
+          "scope"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "asset_id": {
+            "type": "string"
+          },
+          "source_id": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "checked_at": {
+            "type": "string"
+          },
+          "metric_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "value_decimal": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^-?[0-9]+(\\.[0-9]+)?$"
+          },
+          "unit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "period": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scope": {
+            "enum": [
+              "chain",
+              "protocol_global",
+              "protocol_chain",
+              "ecosystem_apps",
+              "token",
+              null
+            ]
+          }
+        }
+      }
+    },
+    "research": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "provider",
+          "type",
+          "tool_id",
+          "queries",
+          "urls",
+          "evidence_ids",
+          "completed_at",
+          "is_fixture"
+        ],
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "tool_id": {
+            "type": "string"
+          },
+          "queries": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "urls": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "completed_at": {
+            "type": "string"
+          },
+          "is_fixture": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "demo": {
+      "type": "boolean"
+    }
+  }
+}

@@ -1,0 +1,26 @@
+services:
+  api:
+    build:
+      context: .
+      target: api
+    ports:
+      - '127.0.0.1:${PORTFEL_PORT:-5080}:8080'
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${PORTFEL_ENVIRONMENT:-Production}
+      Demo__Enabled: ${PORTFEL_DEMO:-false}
+      Storage__DatabasePath: /data/portfel.db
+      Security__KeyDirectory: /data/keys
+    volumes:
+      - data:/data
+  worker:
+    build:
+      context: .
+      target: worker
+    environment:
+      DOTNET_ENVIRONMENT: ${PORTFEL_ENVIRONMENT:-Production}
+      Demo__Enabled: ${PORTFEL_DEMO:-false}
+      Storage__DatabasePath: /data/portfel.db
+    volumes:
+      - data:/data
+volumes:
+  data:

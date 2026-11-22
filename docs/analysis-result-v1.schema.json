@@ -1,0 +1,258 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AnalysisResultV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "asset_id",
+    "snapshot_hash",
+    "title",
+    "summary",
+    "importance",
+    "sections",
+    "changes",
+    "facts",
+    "interpretation",
+    "portfolio_impact",
+    "actions",
+    "unknowns",
+    "next_review"
+  ],
+  "properties": {
+    "schema_version": {
+      "enum": [
+        "v1"
+      ]
+    },
+    "asset_id": {
+      "type": "string"
+    },
+    "snapshot_hash": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "importance": {
+      "enum": [
+        "normal",
+        "important",
+        "critical"
+      ]
+    },
+    "sections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "block",
+          "data_status",
+          "assessment",
+          "rationale",
+          "evidence_ids"
+        ],
+        "properties": {
+          "block": {
+            "enum": [
+              "economy",
+              "supply",
+              "markets",
+              "development"
+            ]
+          },
+          "data_status": {
+            "enum": [
+              "ok",
+              "partial",
+              "stale",
+              "missing",
+              "not_applicable",
+              "conflict",
+              "error"
+            ]
+          },
+          "assessment": {
+            "enum": [
+              "improving",
+              "stable",
+              "deteriorating",
+              "mixed",
+              "undetermined"
+            ]
+          },
+          "rationale": {
+            "type": "string"
+          },
+          "evidence_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "changes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "facts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "text",
+          "evidence_ids",
+          "certainty",
+          "numeric_claims"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "evidence_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "certainty": {
+            "enum": [
+              "confirmed",
+              "reported",
+              "disputed",
+              "unverified"
+            ]
+          },
+          "numeric_claims": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "metric_ref",
+                "value_decimal",
+                "unit",
+                "period",
+                "scope"
+              ],
+              "properties": {
+                "metric_ref": {
+                  "type": "string"
+                },
+                "value_decimal": {
+                  "type": "string",
+                  "pattern": "^-?[0-9]+(\\.[0-9]+)?$"
+                },
+                "unit": {
+                  "type": "string"
+                },
+                "period": {
+                  "type": "string"
+                },
+                "scope": {
+                  "enum": [
+                    "chain",
+                    "protocol_global",
+                    "protocol_chain",
+                    "ecosystem_apps",
+                    "token"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "interpretation": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "text",
+          "fact_ids",
+          "uncertainty"
+        ],
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "fact_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "uncertainty": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "portfolio_impact": {
+      "type": "string"
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "rationale",
+          "condition",
+          "evidence_ids",
+          "urgency"
+        ],
+        "properties": {
+          "type": {
+            "enum": [
+              "observe",
+              "verify",
+              "review_allocation",
+              "prepare"
+            ]
+          },
+          "rationale": {
+            "type": "string"
+          },
+          "condition": {
+            "type": "string"
+          },
+          "evidence_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "urgency": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "unknowns": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "next_review": {
+      "type": "string"
+    }
+  }
+}
