@@ -218,7 +218,7 @@ internal static class SqliteChecks
                 var store = scope.ServiceProvider.GetRequiredService<IWorkspaceStore>();
                 Require(await store.ReadyAsync(default) && (await store.ReadAsync(owner, default)).Jobs.Single().Id == job.Id,
                     "Concurrent startup retries the migration once despite the legacy lock row");
-                var jobs = scope.ServiceProvider.GetRequiredService<WorkspaceJobs>();
+                var jobs = new WorkspaceJobs(store, scope.ServiceProvider.GetRequiredService<TimeProvider>());
                 Job? first = await jobs.ClaimAsync(owner, default);
                 Require(first?.Id == job.Id, "Claims a migrated queue entry");
                 await jobs.CancelAsync(owner, job.Id, default);

@@ -54,7 +54,9 @@ test('summaries merge only explicit stable IDs by default and use exact addition
 test('imports distinct portfolios together, summarizes a selection and updates a snapshot without doubling', async ({ page }) => {
   const apiRequests: string[] = []
   await page.route('**/api/**', route => {
-    if (new URL(route.request().url()).pathname === '/api/v1/public/market/coins') return route.fallback()
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/v1/auth/session') return route.fulfill({ json: { authenticated: false } })
+    if (path === '/api/v1/public/market/coins') return route.fulfill({ json: [] })
     apiRequests.push(route.request().url())
     return route.abort()
   })
@@ -133,7 +135,9 @@ test('conflicting replacements and cross-tab changes do not overwrite saved snap
 test('imports a ZIP as one portfolio named after the archive, ignoring its transactions CSV', async ({ page }) => {
   const apiRequests: string[] = []
   await page.route('**/api/**', route => {
-    if (new URL(route.request().url()).pathname === '/api/v1/public/market/coins') return route.fallback()
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/v1/auth/session') return route.fulfill({ json: { authenticated: false } })
+    if (path === '/api/v1/public/market/coins') return route.fulfill({ json: [] })
     apiRequests.push(route.request().url())
     return route.abort()
   })

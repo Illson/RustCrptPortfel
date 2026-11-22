@@ -13,6 +13,7 @@
     "/auth/session": {
       "get": {
         "summary": "Состояние сессии",
+        "description": "Состояние доступа к рыночным инструментам. В Development csrf_token нужен для включения и закрытия сессии.",
         "responses": {
           "200": {
             "description": "Успешный ответ"
@@ -30,82 +31,10 @@
         }
       }
     },
-    "/auth/cmc/start": {
-      "get": {
-        "summary": "Статус входа CMC",
-        "responses": {
-          "409": {
-            "description": "Возможность заблокирована"
-          },
-          "default": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/auth/cmc/callback": {
-      "get": {
-        "summary": "Возврат из CMC",
-        "responses": {
-          "409": {
-            "description": "Возможность заблокирована"
-          },
-          "default": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      },
+    "/auth/market-tools": {
       "post": {
-        "summary": "Возврат из CMC",
-        "responses": {
-          "409": {
-            "description": "Возможность заблокирована"
-          },
-          "default": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/auth/demo": {
-      "post": {
-        "summary": "Вход в Development",
-        "responses": {
-          "204": {
-            "description": "Успешный ответ"
-          },
-          "default": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
+        "summary": "Включить рыночные инструменты (Development)",
+        "description": "Создаёт локальную сессию для журнала рыночных запросов и кэша истории.",
         "parameters": [
           {
             "name": "X-CSRF-Token",
@@ -115,12 +44,23 @@
               "type": "string"
             }
           }
-        ]
+        ],
+        "responses": {
+          "204": {
+            "description": "Доступ включён."
+          },
+          "403": {
+            "description": "Недействительный CSRF-токен."
+          },
+          "404": {
+            "description": "Вне Development."
+          }
+        }
       }
     },
     "/auth/logout": {
       "post": {
-        "summary": "Выход",
+        "summary": "Закрыть сессию рыночных инструментов",
         "responses": {
           "204": {
             "description": "Успешный ответ"
@@ -146,26 +86,6 @@
             }
           }
         ]
-      }
-    },
-    "/public/integrations": {
-      "get": {
-        "summary": "Публичные статусы",
-        "responses": {
-          "200": {
-            "description": "Успешный ответ"
-          },
-          "default": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
       }
     },
     "/public/market/coins": {
@@ -181,20 +101,36 @@
                   "type": "array",
                   "items": {
                     "type": "object",
-                    "required": ["id", "name", "symbol"],
+                    "required": [
+                      "id",
+                      "name",
+                      "symbol"
+                    ],
                     "properties": {
-                      "id": { "type": "string" },
-                      "name": { "type": "string" },
-                      "symbol": { "type": "string" }
+                      "id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "symbol": {
+                        "type": "string"
+                      }
                     }
                   }
                 }
               }
             }
           },
-          "404": { "description": "Вне Development." },
-          "429": { "description": "Лимит запросов." },
-          "502": { "description": "Данные CoinGecko недоступны." }
+          "404": {
+            "description": "Вне Development."
+          },
+          "429": {
+            "description": "Лимит запросов."
+          },
+          "502": {
+            "description": "Данные CoinGecko недоступны."
+          }
         }
       }
     },
@@ -202,7 +138,16 @@
       "get": {
         "summary": "Публичные цены CoinGecko в USD (Development)",
         "parameters": [
-          { "name": "ids", "in": "query", "required": true, "schema": { "type": "string", "maxLength": 5000 }, "description": "До 100 уникальных CoinGecko ID через запятую." }
+          {
+            "name": "ids",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 5000
+            },
+            "description": "До 100 уникальных CoinGecko ID через запятую."
+          }
         ],
         "responses": {
           "200": {
@@ -213,48 +158,128 @@
                   "type": "array",
                   "items": {
                     "type": "object",
-                    "required": ["id", "usd", "as_of"],
+                    "required": [
+                      "id",
+                      "usd",
+                      "as_of"
+                    ],
                     "properties": {
-                      "id": { "type": "string" },
-                      "usd": { "type": "string" },
-                      "as_of": { "type": "string", "format": "date-time" }
+                      "id": {
+                        "type": "string"
+                      },
+                      "usd": {
+                        "type": "string"
+                      },
+                      "as_of": {
+                        "type": "string",
+                        "format": "date-time"
+                      }
                     }
                   }
                 }
               }
             }
           },
-          "400": { "description": "Недопустимые идентификаторы." },
-          "404": { "description": "Вне Development." },
-          "429": { "description": "Лимит запросов." },
-          "502": { "description": "Данные CoinGecko недоступны." }
+          "400": {
+            "description": "Недопустимые идентификаторы."
+          },
+          "404": {
+            "description": "Вне Development."
+          },
+          "429": {
+            "description": "Лимит запросов."
+          },
+          "502": {
+            "description": "Данные CoinGecko недоступны."
+          }
         }
       }
     },
     "/internal/market/coinmarketcap/charts/{slug}": {
       "get": {
         "summary": "Кэш недельной истории CoinMarketCap в USD",
-        "description": "Для сессии рабочей области в Development. Первый вызов разрешает slug в cryptocurrencyId; следующий после общей паузы может загрузить историю. На каждый внешний GET действует общая пауза 30 секунд, на график одной монеты — час.",
-        "security": [{ "Session": [] }],
+        "description": "Для сессии рыночных инструментов в Development. Первый вызов разрешает slug в cryptocurrencyId; следующий после общей паузы может загрузить историю. На каждый внешний GET CoinMarketCap действует общая пауза 30 секунд, на график одной монеты — час.",
+        "security": [
+          {
+            "Session": []
+          }
+        ],
         "parameters": [
-          { "name": "slug", "in": "path", "required": true, "schema": { "type": "string", "minLength": 1, "maxLength": 120, "pattern": "^[a-z0-9]+(?:-+[a-z0-9]+)*$" } }
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120,
+              "pattern": "^[a-z0-9]+(?:-+[a-z0-9]+)*$"
+            }
+          }
         ],
         "responses": {
           "200": {
             "description": "Свежая, кэшированная или предыдущая история. Точки находятся в chart.data.points.",
             "headers": {
-              "X-Chart-Cache": { "schema": { "type": "string", "enum": ["refreshed", "hit", "stale"] } },
-              "X-Chart-Fetched-At": { "schema": { "type": "string", "format": "date-time" } },
-              "X-Chart-Next-Attempt-At": { "schema": { "type": "string", "format": "date-time" } }
+              "X-Chart-Cache": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "refreshed",
+                    "hit",
+                    "stale"
+                  ]
+                }
+              },
+              "X-Chart-Fetched-At": {
+                "schema": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "X-Chart-Next-Attempt-At": {
+                "schema": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
             }
           },
-          "202": { "description": "ID сохранён. Повторить не раньше Retry-After.", "headers": { "Retry-After": { "schema": { "type": "integer" } } } },
-          "400": { "description": "Некорректный slug." },
-          "401": { "description": "Требуется сессия рабочей области." },
-          "403": { "description": "Нет доступа к рабочей области." },
-          "404": { "description": "Монета не найдена либо маршрут не включён." },
-          "429": { "description": "Истории в кэше нет, внешний запрос ограничен.", "headers": { "Retry-After": { "schema": { "type": "integer" } } } },
-          "502": { "description": "Истории в кэше нет, источник недоступен или вернул неожиданные данные." }
+          "202": {
+            "description": "ID сохранён. Повторить не раньше Retry-After.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректный slug."
+          },
+          "401": {
+            "description": "Требуется сессия рыночных инструментов."
+          },
+          "403": {
+            "description": "Нет доступа к рыночным инструментам."
+          },
+          "404": {
+            "description": "Монета не найдена либо маршрут не включён."
+          },
+          "429": {
+            "description": "Истории в кэше нет, внешний запрос ограничен.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Истории в кэше нет, источник недоступен или вернул неожиданные данные."
+          }
         }
       }
     },
@@ -262,1076 +287,25 @@
       "get": {
         "summary": "Мониторинг запросов CoinMarketCap",
         "description": "Только чтение БД в Development: состояния монет, общая пауза и последние 100 внешних попыток. Просмотр не расходует лимит источника.",
-        "security": [{ "Session": [] }],
+        "security": [
+          {
+            "Session": []
+          }
+        ],
         "responses": {
-          "200": { "description": "Снимок мониторинга: as_of, global_next_attempt_at, coins, requests." },
-          "401": { "description": "Требуется сессия рабочей области." },
-          "403": { "description": "Нет доступа к рабочей области." },
-          "404": { "description": "Маршрут не включён." }
+          "200": {
+            "description": "Снимок мониторинга: as_of, global_next_attempt_at, coins, requests."
+          },
+          "401": {
+            "description": "Требуется сессия рыночных инструментов."
+          },
+          "403": {
+            "description": "Нет доступа к рыночным инструментам."
+          },
+          "404": {
+            "description": "Маршрут не включён."
+          }
         }
-      }
-    },
-    "/portfolio": {
-      "get": {
-        "summary": "Портфель",
-        "responses": {
-          "200": {
-            "description": "Успешный ответ"
-          },
-          "default": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "Session": []
-          }
-        ]
-      }
-    },
-    "/portfolio/sync": {
-      "post": {
-        "summary": "Синхронизация",
-        "responses": {
-          "202": {
-            "description": "Задание принято",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Job"
-                }
-              }
-            }
-          },
-          "default": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "schema": {
-              "type": "string",
-              "maxLength": 128
-            }
-          },
-          {
-            "name": "X-CSRF-Token",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "security": [
-          {
-            "Session": []
-          }
-        ]
-      }
-    },
-    "/assets": {
-      "get": {
-        "summary": "Активы",
-        "responses": {
-          "200": {
-            "description": "Успешный ответ"
-          },
-          "default": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "Session": []
-          }
-        ]
-      }
-    },
-    "/assets/{id}": {
-      "servers": [{ "url": "/api/v1" }, { "url": "/api/v2" }],
-      "get": {
-        "summary": "Карточка актива",
-        "responses": {
-          "200": {
-            "description": "Карточка и последние публикации. В latest элементы analysis имеют тот же формат версии API, что и GET /feed. При updating=true ожидается синхронизация либо анализ."
-          },
-          "default": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "security": [
-          {
-            "Session": []
-          }
-        ]
-      }
-    },
-    "/assets/{id}/metrics": {
-      "get": {
-        "summary": "metrics",
-        "responses": {
-          "200": {
-            "description": "Успешный ответ"
-          },
-          "default": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "block",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "from",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "to",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "granularity",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "security": [
-          {
-            "Session": []
-          }
-        ]
-      }
-    },
-    "/assets/{id}/supply": {
-      "get": {
-        "summary": "supply",
-        "responses": {
-          "200": {
-            "description": "Успешный ответ"
-          },
-          "default": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "security": [
-          {
-            "Session": []
-          }
-        ]
-      }
-    },
-    "/assets/{id}/markets": {
-      "get": {
-        "summary": "markets",
-        "responses": {
-          "200": {
-            "description": "Успешный ответ"
-          },
-          "default": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "security": [
-          {
-            "Session": []
-          }
-        ]
-      }
-    },
-    "/assets/{id}/events": {
-      "get": {
-        "summary": "events",
-        "responses": {
-          "200": {
-            "description": "Успешный ответ"
-          },
-          "default": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "security": [
-          {
-            "Session": []
-          }
-        ]
-      }
-    },
-    "/assets/{id}/sources": {
-      "get": {
-        "summary": "sources",
-        "responses": {
-          "200": {
-            "description": "Успешный ответ"
-          },
-          "default": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "security": [
-          {
-            "Session": []
-          }
-        ]
-      }
-    },
-    "/assets/{id}/analyses": {
-      "servers": [{ "url": "/api/v1" }, { "url": "/api/v2" }],
-      "get": {
-        "summary": "analyses",
-        "responses": {
-          "200": {
-            "description": "История версий карточек. Поле analysis имеет тот же формат версии API, что и GET /feed."
-          },
-          "default": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "security": [
-          {
-            "Session": []
-          }
-        ]
-      }
-    },
-    "/assets/{id}/analysis-runs": {
-      "post": {
-        "summary": "Анализ актива",
-        "responses": {
-          "202": {
-            "description": "Задание принято",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Job"
-                }
-              }
-            }
-          },
-          "default": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "schema": {
-              "type": "string",
-              "maxLength": 128
-            }
-          },
-          {
-            "name": "X-CSRF-Token",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "security": [
-          {
-            "Session": []
-          }
-        ]
-      }
-    },
-    "/events": {
-      "get": {
-        "summary": "Календарь",
-        "responses": {
-          "200": {
-            "description": "Успешный ответ"
-          },
-          "default": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "Session": []
-          }
-        ]
-      }
-    },
-    "/feed": {
-      "servers": [{ "url": "/api/v1" }, { "url": "/api/v2" }],
-      "get": {
-        "summary": "Лента",
-        "responses": {
-          "200": {
-            "description": "Страница items с next_cursor и флагом updating. Массив assets (asset_id, symbol) содержит позиции для фильтра из того же снимка. В API v1 analysis имеет schema_version=v1, title, importance и блоки economy/supply/markets/development. В API v2 analysis имеет schema_version=1.0, headline, severity и блоки economics/supply/markets/project."
-          },
-          "default": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "asset",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "type",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "importance",
-            "in": "query",
-            "description": "normal включает info и watch; точное значение info, watch, important или critical отбирает только эту категорию.",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "from",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "to",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "read",
-            "in": "query",
-            "schema": {
-              "type": "boolean"
-            }
-          },
-          {
-            "name": "cursor",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "security": [
-          {
-            "Session": []
-          }
-        ]
-      }
-    },
-    "/feed/{id}/reports": {
-      "post": {
-        "summary": "Записать замечание к версии карточки (не отправляется вовне)",
-        "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
-          { "name": "X-CSRF-Token", "in": "header", "required": true, "schema": { "type": "string" } }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": { "type": "object", "required": ["reason"], "properties": { "reason": { "type": "string", "minLength": 1, "maxLength": 800 } } }
-            }
-          }
-        },
-        "responses": {
-          "204": { "description": "Замечание сохранено" },
-          "default": { "description": "Ошибка", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
-        }
-      }
-    },
-    "/feed/{id}/read": {
-      "patch": {
-        "summary": "Прочитанность",
-        "responses": {
-          "200": {
-            "description": "Успешный ответ"
-          },
-          "default": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "X-CSRF-Token",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "read": {
-                    "type": "boolean"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "Session": []
-          }
-        ]
-      }
-    },
-    "/jobs/{id}": {
-      "get": {
-        "summary": "Состояние задания",
-        "responses": {
-          "200": {
-            "description": "Успешный ответ"
-          },
-          "default": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "security": [
-          {
-            "Session": []
-          }
-        ]
-      }
-    },
-    "/jobs/{id}/cancel": {
-      "post": {
-        "summary": "Отмена задания",
-        "responses": {
-          "200": {
-            "description": "Успешный ответ"
-          },
-          "default": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "X-CSRF-Token",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "security": [
-          {
-            "Session": []
-          }
-        ]
-      }
-    },
-    "/integrations/status": {
-      "get": {
-        "summary": "Интеграции",
-        "responses": {
-          "200": {
-            "description": "Успешный ответ"
-          },
-          "default": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "Session": []
-          }
-        ]
-      }
-    },
-    "/settings": {
-      "get": {
-        "summary": "Настройки",
-        "responses": {
-          "200": {
-            "description": "Успешный ответ"
-          },
-          "default": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "Session": []
-          }
-        ]
-      },
-      "patch": {
-        "summary": "Изменение настроек",
-        "responses": {
-          "200": {
-            "description": "Успешный ответ"
-          },
-          "default": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "X-CSRF-Token",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "timezone": {
-                    "type": "string"
-                  },
-                  "daily_time": {
-                    "type": "string"
-                  },
-                  "schedule_enabled": {
-                    "type": "boolean"
-                  },
-                  "major_exchange_ids": {
-                    "type": "array",
-                    "items": {
-                      "type": "string"
-                    }
-                  },
-                  "investment_profile": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  }
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "Session": []
-          }
-        ]
-      }
-    },
-    "/ai/connections": {
-      "get": {
-        "summary": "AI-подключения",
-        "responses": {
-          "200": {
-            "description": "Успешный ответ"
-          },
-          "default": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "Session": []
-          }
-        ]
-      },
-      "post": {
-        "summary": "Создание AI-подключения",
-        "responses": {
-          "409": {
-            "description": "Возможность заблокирована"
-          },
-          "default": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "X-CSRF-Token",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "security": [
-          {
-            "Session": []
-          }
-        ]
-      }
-    },
-    "/ai/connections/{id}": {
-      "delete": {
-        "summary": "Отключение AI",
-        "responses": {
-          "409": {
-            "description": "Возможность заблокирована"
-          },
-          "default": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "X-CSRF-Token",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "security": [
-          {
-            "Session": []
-          }
-        ]
-      }
-    },
-    "/ai/connections/{id}/capabilities": {
-      "get": {
-        "summary": "Возможности AI",
-        "responses": {
-          "200": {
-            "description": "Успешный ответ"
-          },
-          "default": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "security": [
-          {
-            "Session": []
-          }
-        ]
-      }
-    },
-    "/ai/chatgpt/connect": {
-      "post": {
-        "summary": "Подключение ChatGPT",
-        "responses": {
-          "409": {
-            "description": "Возможность заблокирована"
-          },
-          "default": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "X-CSRF-Token",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "security": [
-          {
-            "Session": []
-          }
-        ]
-      }
-    },
-    "/ai/chatgpt/callback": {
-      "get": {
-        "summary": "Возврат из ChatGPT",
-        "responses": {
-          "409": {
-            "description": "Возможность заблокирована"
-          },
-          "default": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "Session": []
-          }
-        ]
-      }
-    },
-    "/ai/routes": {
-      "get": {
-        "summary": "Маршруты AI",
-        "responses": {
-          "200": {
-            "description": "Успешный ответ"
-          },
-          "default": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "Session": []
-          }
-        ]
-      },
-      "patch": {
-        "summary": "Изменение маршрутов AI",
-        "responses": {
-          "409": {
-            "description": "Возможность заблокирована"
-          },
-          "default": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "X-CSRF-Token",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "security": [
-          {
-            "Session": []
-          }
-        ]
       }
     },
     "/health/live": {
@@ -1373,6 +347,69 @@
           }
         }
       }
+    },
+    "/internal/market/requests": {
+      "get": {
+        "summary": "Общий журнал рыночных запросов (Development)",
+        "description": "Последние 100 внешних GET к CoinGecko и CoinMarketCap. Возвращает источник, тип запроса, результат, HTTP-код источника, начало, окончание и краткий ответ. Сам мониторинг не делает запросов к источникам.",
+        "security": [
+          {
+            "Session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Снимок мониторинга: as_of, global_next_attempt_at, coins, requests."
+          },
+          "401": {
+            "description": "Требуется сессия рыночных инструментов."
+          },
+          "403": {
+            "description": "Нет доступа к рыночным инструментам."
+          },
+          "404": {
+            "description": "Вне Development."
+          }
+        }
+      }
+    },
+    "/internal/market/coinmarketcap/cached/{slug}": {
+      "get": {
+        "summary": "Полный JSON последнего сохранённого графика CoinMarketCap",
+        "description": "Только чтение кэша. Не запускает запрос к источнику даже при устаревших данных.",
+        "security": [
+          {
+            "Session": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120,
+              "pattern": "^[a-z0-9]+(?:-+[a-z0-9]+)*$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Сохранённые platformInfo и chart без округления чисел."
+          },
+          "400": {
+            "description": "Некорректный slug."
+          },
+          "401": {
+            "description": "Требуется сессия рыночных инструментов."
+          },
+          "404": {
+            "description": "Нет сохранённого графика либо маршрут не включён."
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1400,36 +437,6 @@
             "type": "string"
           },
           "details": {}
-        }
-      },
-      "Job": {
-        "type": "object",
-        "properties": {
-          "job_id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "status": {
-            "enum": [
-              "queued",
-              "running",
-              "succeeded",
-              "retry_wait",
-              "failed",
-              "blocked",
-              "cancelled"
-            ]
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "block_reason": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
         }
       }
     }

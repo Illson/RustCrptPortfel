@@ -18,7 +18,11 @@ try
     await using (var db = new PortfelDb(options))
     {
         SqliteChecks.VerifyMigrationModel(db);
-        await db.GetService<IMigrator>().MigrateAsync("20261122000300_PersistentQueue");
+        await db.GetService<IMigrator>().MigrateAsync("20261123000100_CoinMarketCapCache");
+        await db.Database.ExecuteSqlAsync($"""
+            INSERT INTO cmc_requests (id, slug, kind, outcome, http_status, started_at)
+            VALUES ('legacy-fixture', 'fixture-coin', 'platform', 'succeeded', 200, 1000)
+            """);
         var store = new SqliteWorkspaceStore(db);
         await store.UpdateAsync(owner, state => (DemoPortfolio.Sync(state, now), true), default);
         var jobs = new WorkspaceJobs(store, new FixedClock(now));
@@ -28,6 +32,10 @@ try
     await using (var db = new PortfelDb(options))
     {
         await db.Database.MigrateAsync();
+        using var noNetwork = new HttpClient(new MockHttp((_, _) => throw new InvalidOperationException("Unexpected external call")));
+        var legacy = (await new CoinMarketCapHistory(db, noNetwork, new FixedClock(now)).MonitorAsync(default)).Requests.Single();
+        Check(legacy is { Id: "legacy-fixture", HttpStatus: 200, Response: null }, "Journal migration retains prior attempts without inventing a response");
+        await db.Database.ExecuteSqlAsync($"DELETE FROM cmc_requests WHERE id = 'legacy-fixture'");
         var store = new SqliteWorkspaceStore(db);
         var jobs = new WorkspaceJobs(store, new FixedClock(now));
         Check((await jobs.QueueAsync(owner, JobKind.PortfolioSync, null, "test-key", true, default)).JobId == jobId, "Restart retains idempotency");

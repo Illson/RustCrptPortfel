@@ -208,7 +208,8 @@ internal static class PublicSourceHttp
         await ReadAsync(client, clock, url, header, parse, SourceBatch.Failed, ct);
 
     internal static async Task<T> ReadAsync<T>(HttpClient client, TimeProvider clock, Uri url, (string Name, string Value)? header,
-        Func<JsonElement, DateTimeOffset, T> parse, Func<string, DateTimeOffset, DateTimeOffset?, T> failed, CancellationToken ct)
+        Func<JsonElement, DateTimeOffset, T> parse, Func<string, DateTimeOffset, DateTimeOffset?, T> failed, CancellationToken ct,
+        Action<HttpStatusCode>? received = null)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         deadline.CancelAfter(TimeSpan.FromSeconds(20));
@@ -217,6 +218,7 @@ internal static class PublicSourceHttp
         try
         {
             using var response = await client.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
+            received?.Invoke(response.StatusCode);
             DateTimeOffset now = clock.GetUtcNow();
             if (!response.IsSuccessStatusCode)
                 return failed(response.StatusCode switch

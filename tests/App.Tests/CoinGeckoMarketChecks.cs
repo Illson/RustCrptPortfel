@@ -39,6 +39,11 @@ internal static class CoinGeckoMarketChecks
             dash.AsOf == now.AddSeconds(60), "Keep exact price and original timestamp within clock tolerance; reject excessive future records");
         await market.QuotesAsync(["bitcoin", "future", "dash"], default);
         Require(requests == 2, "Catalog and positive and negative quote results are cached");
+        var journal = market.Requests();
+        Require(journal is [{ Provider: "CoinGecko", Kind: "quotes", Outcome: "succeeded", HttpStatus: 200, Slug: null, Response: { } summary },
+                { Kind: "catalog", HttpStatus: 200 }] && summary.GetProperty("available").GetInt32() == 2 &&
+            summary.GetProperty("requested").GetInt32() == 3 && !summary.GetRawText().Contains("bitcoin", StringComparison.Ordinal),
+            "Quote journal reports actual HTTP code and coverage without revealing requested assets");
         await RejectAsync(() => market.QuotesAsync(["bitcoin&amount=123"], default), "invalid_asset_ids", 400);
         clock.Now = now.AddMinutes(1);
         await market.QuotesAsync(ids, default);
@@ -53,6 +58,9 @@ internal static class CoinGeckoMarketChecks
         await RejectAsync(() => throttled.CoinsAsync(default), "rate_limited", 429);
         await RejectAsync(() => throttled.QuotesAsync(["bitcoin"], default), "rate_limited", 429);
         Require(limits == 1, "Provider throttling prevents immediate retry");
+        Require(throttled.Requests() is [{ Kind: "catalog", Outcome: "rate_limited", HttpStatus: 429 }] &&
+                throttled.Requests()[0].Response!.Value.GetProperty("error").GetString() == "rate_limited",
+            "Journal reports upstream 429 but does not manufacture a second HTTP attempt");
         Console.WriteLine("PASS CoinGecko live quote contract, privacy, precision, caching and rate limits");
     }
 

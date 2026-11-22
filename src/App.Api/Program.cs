@@ -34,8 +34,6 @@ if (local)
 var protection = builder.Services.AddDataProtection().SetApplicationName($"dotnetCrptPortfel:{builder.Environment.EnvironmentName}");
 if (builder.Configuration["Security:KeyDirectory"] is { Length: > 0 } keyDirectory)
     protection.PersistKeysToFileSystem(Directory.CreateDirectory(keyDirectory));
-else if (local && builder.Configuration["Demo:DataDirectory"] is { Length: > 0 } demoDirectory)
-    protection.PersistKeysToFileSystem(Directory.CreateDirectory(Path.Combine(demoDirectory, "keys")));
 if (builder.Configuration["Security:KeyCertificatePath"] is { Length: > 0 } certificatePath)
     protection.ProtectKeysWithCertificate(X509CertificateLoader.LoadPkcs12FromFile(certificatePath, builder.Configuration["Security:KeyCertificatePassword"]));
 else if (OperatingSystem.IsWindows())
@@ -55,9 +53,9 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
     options.Events.OnRedirectToAccessDenied = context => ApiEndpoints.WriteFault(context.HttpContext,
         new AppFault("forbidden", "Доступ запрещён.", 403));
 });
-builder.Services.AddAuthorizationBuilder().AddPolicy("workspace", policy => policy.RequireAuthenticatedUser()
-    .RequireAssertion(context => context.Resource is HttpContext http && http.RequestServices.GetRequiredService<DemoSettings>().Enabled
-        && context.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value == DemoPortfolio.Owner));
+builder.Services.AddAuthorizationBuilder()
+    .AddPolicy("market-tools", policy => policy.RequireAuthenticatedUser()
+        .RequireAssertion(context => local && context.Resource is HttpContext http && ApiEndpoints.HasMarketSession(http)));
 builder.Services.AddAntiforgery(options =>
 {
     options.HeaderName = "X-CSRF-Token";

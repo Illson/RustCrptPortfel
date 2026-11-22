@@ -22,6 +22,8 @@ public sealed class CoinGeckoMarket : IDisposable
     private readonly ILogger<CoinGeckoMarket> log;
     private readonly SemaphoreSlim gate = new(1);
     private readonly Queue<DateTimeOffset> recent = new();
+    private readonly Lock journalLock = new();
+    private readonly LinkedList<MarketRequestStatus> journal = new();
     private readonly Dictionary<string, (UsdQuote? Quote, DateTimeOffset At)> quotes = new(StringComparer.Ordinal);
     private MarketCoin[]? catalog;
     private DateTimeOffset catalogAt;
@@ -49,7 +51,8 @@ public sealed class CoinGeckoMarket : IDisposable
                 log.LogInformation("CoinGecko catalog: served from cache");
                 return catalog;
             }
-            var read = await FetchAsync("/coins/list?include_platform=false", ParseCatalog, ct);
+            var read = await FetchAsync("catalog", "/coins/list?include_platform=false", ParseCatalog,
+                coins => new { coins = coins.Length }, ct);
             catalogAt = read.At;
             return catalog = read.Data;
         }
@@ -69,8 +72,10 @@ public sealed class CoinGeckoMarket : IDisposable
             string[] missing = ids.Where(id => !quotes.ContainsKey(id)).Order(StringComparer.Ordinal).ToArray();
             if (missing.Length > 0)
             {
-                var read = await FetchAsync($"/simple/price?ids={string.Join(',', missing)}&vs_currencies=usd&include_last_updated_at=true&precision=full",
-                    (json, at) => ParseQuotes(json, at, missing.ToHashSet(StringComparer.Ordinal)), ct);
+                var read = await FetchAsync("quotes",
+                    $"/simple/price?ids={string.Join(',', missing)}&vs_currencies=usd&include_last_updated_at=true&precision=full",
+                    (json, at) => ParseQuotes(json, at, missing.ToHashSet(StringComparer.Ordinal)),
+                    prices => new { requested = missing.Length, available = prices.Count }, ct);
                 foreach (string id in missing) quotes[id] = (read.Data.GetValueOrDefault(id), read.At);
             }
             var result = ids.Select(id => quotes[id].Quote).OfType<UsdQuote>().ToArray();
@@ -81,7 +86,13 @@ public sealed class CoinGeckoMarket : IDisposable
         finally { gate.Release(); }
     }
 
-    private async Task<(T Data, DateTimeOffset At)> FetchAsync<T>(string path, Func<JsonElement, DateTimeOffset, T> parse, CancellationToken ct)
+    public MarketRequestStatus[] Requests()
+    {
+        lock (journalLock) return journal.ToArray();
+    }
+
+    private async Task<(T Data, DateTimeOffset At)> FetchAsync<T>(string kind, string path, Func<JsonElement, DateTimeOffset, T> parse,
+        Func<T, object> summarize, CancellationToken ct)
     {
         var now = clock.GetUtcNow();
         var url = new Uri(BaseUrl + path);
@@ -92,11 +103,39 @@ public sealed class CoinGeckoMarket : IDisposable
             throw new AppFault("rate_limited", "Лимит запросов котировок. Попробуйте через минуту.", 429);
         }
         recent.Enqueue(now);
+        var attempt = new MarketRequestStatus(Guid.NewGuid().ToString("N"), null, kind, "running", null, now, null, "CoinGecko");
+        LinkedListNode<MarketRequestStatus> entry;
+        lock (journalLock)
+        {
+            entry = journal.AddFirst(attempt);
+            if (journal.Count > 100) journal.RemoveLast();
+        }
         log.LogInformation("CoinGecko GET {Path}: started", url.AbsolutePath);
         long started = Stopwatch.GetTimestamp();
-        var reply = await PublicSourceHttp.ReadAsync(http, clock, url, null,
-            (json, at) => new Reply<T>(parse(json, at), at, null, null),
-            (status, at, retry) => new Reply<T>(default, at, status, retry), ct);
+        int? httpStatus = null;
+        void Finish(string outcome, object summary)
+        {
+            lock (journalLock) entry.Value = attempt with
+            {
+                Outcome = outcome, HttpStatus = httpStatus, FinishedAt = clock.GetUtcNow(),
+                Response = JsonSerializer.SerializeToElement(summary),
+            };
+        }
+        Reply<T> reply;
+        try
+        {
+            reply = await PublicSourceHttp.ReadAsync(http, clock, url, null,
+                (json, at) => new Reply<T>(parse(json, at), at, null, null),
+                (status, at, retry) => new Reply<T>(default, at, status, retry), ct, status => httpStatus = (int)status);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            Finish("cancelled", new { error = "cancelled" });
+            throw;
+        }
+        string? error = reply.Error ?? (reply.Data is null ? "schema_error" : null);
+        Finish(error switch { null => "succeeded", "rate_limited" => "rate_limited", _ => "failed" },
+            error is null ? summarize(reply.Data!) : new { error });
         log.LogInformation("CoinGecko GET {Path}: {Outcome} ({ElapsedMs:F0} ms)", url.AbsolutePath, reply.Error ?? "ok",
             Stopwatch.GetElapsedTime(started).TotalMilliseconds);
         if (reply.Error == "rate_limited")

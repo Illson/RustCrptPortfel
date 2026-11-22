@@ -66,6 +66,7 @@ test('prices already saved portfolios, resolves ambiguity locally and keeps fres
   await page.route('**/api/**', async route => {
     const incoming = route.request()
     const url = new URL(incoming.url())
+    if (url.pathname === '/api/v1/auth/session') return route.abort()
     requests.push(url.pathname + url.search)
     expect(incoming.method()).toBe('GET')
     expect(incoming.postData()).toBeNull()
