@@ -1,5 +1,6 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -26,7 +27,9 @@ public static class Persistence
         path = Path.GetFullPath(path);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var connection = new SqliteConnectionStringBuilder { DataSource = path, DefaultTimeout = 20, ForeignKeys = true };
-        services.AddDbContext<PortfelDb>(options => options.UseSqlite(connection.ToString()));
+        services.AddDbContext<PortfelDb>(options => options.UseSqlite(connection.ToString())
+            // DatabaseStartup takes the SQLite writer lock before running EF migrations.
+            .ConfigureWarnings(warnings => warnings.Ignore(RelationalEventId.MigrationsUserTransactionWarning)));
         services.AddScoped<IWorkspaceStore, SqliteWorkspaceStore>();
         services.AddHostedService<DatabaseStartup>();
         return services;

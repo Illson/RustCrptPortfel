@@ -210,8 +210,12 @@ internal sealed class DatabaseStartup(IServiceScopeFactory scopes) : IHostedServ
     {
         await using var scope = scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<PortfelDb>();
-        await db.Database.MigrateAsync(cancellationToken);
         await db.Database.ExecuteSqlRawAsync("PRAGMA journal_mode = WAL", cancellationToken);
+        // BEGIN IMMEDIATE serializes both hosts and releases the lock even if a process dies.
+        // EF uses the existing transaction instead of its persistent SQLite migration lock row.
+        await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        await db.Database.MigrateAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;

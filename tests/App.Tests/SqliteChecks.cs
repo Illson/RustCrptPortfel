@@ -5,6 +5,9 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Migrations.Operations;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Portfel.Application;
 using Portfel.Domain;
 using Portfel.Infrastructure;
@@ -12,6 +15,11 @@ using static Checks;
 
 internal static class SqliteChecks
 {
+    private const string InitialMigration = "20261122000100_InitialWorkspace";
+    private const int ConstraintPrimaryKey = 1555;
+    private const int ConstraintTrigger = 1811;
+    private const int ConstraintUnique = 2067;
+
     internal static void VerifyMigrationModel(PortfelDb db)
     {
         if (!db.Database.HasPendingModelChanges()) return;
@@ -34,14 +42,14 @@ internal static class SqliteChecks
     {
         const string owner = "test:sqlite-legacy";
         const string other = "test:sqlite-concurrent";
-        const string initial = "20261122000100_InitialWorkspace";
         string database = Path.Combine(Path.GetTempPath(), $"queue-{Guid.NewGuid():N}.db");
         var connection = new SqliteConnectionStringBuilder { DataSource = database, Pooling = false, ForeignKeys = true, DefaultTimeout = 10 };
         var options = new DbContextOptionsBuilder<PortfelDb>().UseSqlite(connection.ToString()).Options;
         var state = DemoPortfolio.Sync(Workspace.Empty, now);
         var (snapshot, analysis) = DemoPortfolio.Analyze(state, "5426", now);
         var published = WorkspaceJobs.Publish(state, owner, snapshot, analysis, now);
-        string key = published.Feed[0].PublishKey;
+        var local = TimeZoneInfo.ConvertTime(now, TimeZoneInfo.FindSystemTimeZoneById(state.Settings.Timezone));
+        string key = FormattableString.Invariant($"{owner}:{DemoPortfolio.PortfolioId}:5426:{local:yyyy-MM-dd}:daily_analysis");
         string headline = analysis.Headline;
         Job oldJob = new(Guid.NewGuid(), JobKind.PortfolioSync, null, "legacy-submit", "request-hash", JobStatus.Succeeded, now);
         Job nextJob = oldJob with { Id = Guid.NewGuid(), IdempotencyKey = "legacy-next", Status = JobStatus.Queued };
@@ -52,10 +60,10 @@ internal static class SqliteChecks
             {
                 var store = new SqliteWorkspaceStore(db);
                 Require(!await store.ReadyAsync(default), "Opening an empty SQLite file is not readiness");
-                await db.GetService<IMigrator>().MigrateAsync(initial);
+                await db.GetService<IMigrator>().MigrateAsync(InitialMigration);
                 Require(!await store.ReadyAsync(default), "Old schema is not ready before migration");
-                var legacy = JsonSerializer.SerializeToNode(published with { Jobs = [oldJob, nextJob], Feed = [published.Feed[0] with { Read = true }] },
-                    PortfelJson.Options)!;
+                var oldItem = published.Feed[0] with { PublishKey = key, Read = true, SnapshotId = null };
+                var legacy = JsonSerializer.SerializeToNode(state with { Jobs = [oldJob, nextJob], Feed = [oldItem] }, PortfelJson.Options)!;
                 var card = legacy["feed"]![0]!["analysis"]!;
                 card["title"] = card["headline"]!.DeepClone();
                 card.AsObject().Remove("headline");
@@ -78,14 +86,28 @@ internal static class SqliteChecks
                 await ExpectConstraintAsync(() => db.Database.ExecuteSqlAsync($"""
                     INSERT INTO jobs (owner_id, id, idempotency_key, data)
                     SELECT owner_id, 'test-duplicate', idempotency_key, data FROM jobs WHERE owner_id = {owner} AND id = {oldJob.Id.ToString("D")}
-                    """));
+                    """), ConstraintUnique);
                 await ExpectConstraintAsync(() => db.Database.ExecuteSqlAsync($"""
                     INSERT INTO feed_publications (owner_id, publish_key) VALUES ({owner}, {key})
-                    """));
-                await db.GetService<IMigrator>().MigrateAsync(initial);
+                    """), ConstraintPrimaryKey);
+                await ExpectConstraintAsync(() => db.Database.ExecuteSqlAsync($"""
+                    INSERT INTO feed_versions (owner_id, publish_key, version, id, data)
+                    SELECT owner_id, publish_key, version, 'test-duplicate', data FROM feed_versions WHERE owner_id = {owner}
+                    """), ConstraintPrimaryKey);
+                await db.GetService<IMigrator>().MigrateAsync(InitialMigration);
                 await db.Database.MigrateAsync();
                 Require((await store.ReadAsync(owner, default)).Feed.Single().Id == loaded.Feed.Single().Id,
                     "Downgrade and upgrade keep legacy feed");
+
+                var later = now.AddMinutes(1);
+                var (newSnapshot, newResult) = DemoPortfolio.Analyze(loaded, "5426", later);
+                await store.UpdateAsync(owner, current => (WorkspaceJobs.Publish(current, owner, newSnapshot, newResult, later), true), default);
+                var updated = await store.ReadAsync(owner, default);
+                Require(updated.Feed is
+                    [{ Read: true }, { PublishKey: var updatedKey, Version: 2, SupersedesId: var superseded }]
+                    && updatedKey == key && superseded == oldItem.Id
+                    && PortfolioQueries.Feed(updated, null, null, null, null, null, null, null).Items.Single().Version == 2,
+                    "The visible feed uses the new version under the legacy key, preserving history");
             }
 
             async Task<JobReceipt> QueueAsync()
@@ -142,12 +164,82 @@ internal static class SqliteChecks
             File.Delete(database + "-wal");
             File.Delete(database + "-shm");
         }
+
+        await VerifyStartupRecoveryAsync(now);
     }
 
-    private static async Task ExpectConstraintAsync(Func<Task<int>> insert)
+    private static async Task VerifyStartupRecoveryAsync(DateTimeOffset now)
     {
-        try { await insert(); }
-        catch (SqliteException error) when (error.SqliteErrorCode == 19) { return; }
-        throw new InvalidOperationException("SQLite allowed a duplicate identity");
+        const string owner = "test:interrupted-upgrade";
+        string database = Path.Combine(Path.GetTempPath(), $"upgrade-{Guid.NewGuid():N}.db");
+        var connection = new SqliteConnectionStringBuilder { DataSource = database, Pooling = false, ForeignKeys = true };
+        var options = new DbContextOptionsBuilder<PortfelDb>().UseSqlite(connection.ToString()).Options;
+        Job job = new(Guid.NewGuid(), JobKind.PortfolioSync, null, "old-job", "hash", JobStatus.Queued, now);
+        string original = JsonSerializer.Serialize(Workspace.Empty with { Jobs = [job] }, PortfelJson.Options);
+        using var api = BuildHost();
+        using var worker = BuildHost();
+
+        try
+        {
+            await using (var db = new PortfelDb(options))
+            {
+                await db.GetService<IMigrator>().MigrateAsync(InitialMigration);
+                await db.Database.ExecuteSqlAsync($"INSERT INTO workspaces (owner_id, data) VALUES ({owner}, {original})");
+                await db.Database.ExecuteSqlRawAsync("""
+                    INSERT INTO "__EFMigrationsLock" ("Id", "Timestamp") VALUES (1, '2026-11-22 08:00:00');
+                    CREATE TRIGGER fail_test_upgrade BEFORE UPDATE ON workspaces
+                    BEGIN SELECT RAISE(ABORT, 'test upgrade failed'); END;
+                    """);
+            }
+
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            using (var failed = BuildHost())
+                await ExpectConstraintAsync(() => failed.StartAsync(timeout.Token), ConstraintTrigger);
+
+            await using (var db = new PortfelDb(options))
+            {
+                Require((await db.Database.GetAppliedMigrationsAsync()).SequenceEqual([InitialMigration]),
+                    "Failed migration leaves migration history unchanged");
+                Require(!await new SqliteWorkspaceStore(db).ReadyAsync(default)
+                    && await db.Database.SqlQueryRaw<string>("SELECT data AS Value FROM workspaces").SingleAsync() == original,
+                    "Failed migration rolls back tables and the original workspace");
+                await db.Database.ExecuteSqlRawAsync("DROP TRIGGER fail_test_upgrade");
+            }
+
+            await Task.WhenAll(Task.Run(() => api.StartAsync(timeout.Token)), Task.Run(() => worker.StartAsync(timeout.Token)));
+            using (var scope = api.Services.CreateScope())
+            {
+                var store = scope.ServiceProvider.GetRequiredService<IWorkspaceStore>();
+                Require(await store.ReadyAsync(default) && (await store.ReadAsync(owner, default)).Jobs.Single().Id == job.Id,
+                    "Concurrent startup retries the migration once despite the legacy lock row");
+            }
+            await Task.WhenAll(api.StopAsync(timeout.Token), worker.StopAsync(timeout.Token));
+            Console.WriteLine("PASS SQLite startup recovery after a failed migration and concurrent restart");
+        }
+        finally
+        {
+            using var scope = api.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<PortfelDb>();
+            SqliteConnection.ClearPool((SqliteConnection)db.Database.GetDbConnection());
+            File.Delete(database);
+            File.Delete(database + "-wal");
+            File.Delete(database + "-shm");
+        }
+
+        IHost BuildHost()
+        {
+            var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings { EnvironmentName = Environments.Production });
+            builder.Configuration["Storage:DatabasePath"] = database;
+            builder.Logging.ClearProviders();
+            builder.Services.AddPortfel(builder.Configuration, builder.Environment);
+            return builder.Build();
+        }
+    }
+
+    private static async Task ExpectConstraintAsync(Func<Task> write, int extendedCode)
+    {
+        try { await write(); }
+        catch (SqliteException error) when (error.SqliteExtendedErrorCode == extendedCode) { return; }
+        throw new InvalidOperationException($"Expected SQLite constraint failure {extendedCode}");
     }
 }

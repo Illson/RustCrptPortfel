@@ -69,6 +69,10 @@ for (const width of [390, 1440]) {
 }
 
 test('session, CSRF, idempotency and API fallback', async ({ request }) => {
+  const index = await request.get('/')
+  expect(index.ok()).toBe(true)
+  expect(index.headers()['content-security-policy']).toContain("default-src 'self'")
+  expect(index.headers()['content-security-policy']).toContain("frame-ancestors 'none'")
   const root = '/api/v1'
   expect((await request.get(`${root}/portfolio`)).status()).toBe(401)
   expect((await (await request.get(`${root}/auth/cmc/start`)).json()).code).toBe('CMC_AUTH_UNVERIFIED')
