@@ -125,14 +125,17 @@ public static class PortfolioQueries
             new[] { 30, 90, 365 }.Select(days =>
             {
                 SupplyWindow window = Metrics.Supply(asset.Supply, asset.Asset.Id, now, days,
-                    quality is Quality.Ok or Quality.Error ? amount : null, asset.SupplyCoveredThrough, asset.SupplyCoveredFrom, asset.BurnsCovered);
-                return quality is Quality.Stale or Quality.Error && window.QualityStatus == Quality.Missing
+                    quality == Quality.Ok ? amount : null, asset.SupplyCoveredThrough, asset.SupplyCoveredFrom, asset.BurnsCovered);
+                return quality != Quality.Ok && window.QualityStatus == Quality.Missing
                     ? window with { QualityStatus = quality } : window;
             }).ToArray(), Metrics.CurrentSchedule(asset.Supply.Where(item => item.AssetId == asset.Asset.Id)), quality);
     }
 
     public static IEnumerable<ProjectEvent> CurrentEvents(IEnumerable<ProjectEvent> events) =>
         events.GroupBy(item => (item.AssetId, item.Id)).Select(group => group.MaxBy(item => item.Version)!);
+
+    public static MarketSummary Markets(AssetData asset, DateTimeOffset now, string[] major) =>
+        Metrics.Markets(asset.Markets, asset.Asset.Id, now, major, asset.MarketCoverage?.Any(row => !row.Complete) == true);
 
     public static FeedPage Feed(Workspace state, string? asset, string? type, string? importance,
         DateOnly? from, DateOnly? to, bool? read, Guid? cursor, DateTimeOffset? now = null)
@@ -151,8 +154,10 @@ public static class PortfolioQueries
             .OrderByDescending(item => item.PublishedAt).ThenByDescending(item => item.Id).Take(21).ToArray();
         bool updating = state.Jobs.Any(job => job.Status is JobStatus.Queued or JobStatus.Running or JobStatus.RetryWait
             && (asset is null || job.Kind == JobKind.PortfolioSync || job.AssetId == asset));
+        var symbols = state.Assets.ToDictionary(row => row.Asset.Id, row => row.Asset.Symbol, StringComparer.Ordinal);
         return new(items.Take(20).Select(item => now.HasValue ? WithCurrentPersonalization(state, item, now.Value) : item).ToArray(),
-            items.Length > 20 ? items[19].Id : null, updating);
+            items.Length > 20 ? items[19].Id : null, updating,
+            (state.Current?.Positions ?? []).Select(p => new FeedAsset(p.AssetId, p.SourceSymbol ?? symbols.GetValueOrDefault(p.AssetId) ?? p.AssetId)).ToArray());
     }
 
     public static FeedItem WithCurrentPersonalization(Workspace state, FeedItem item, DateTimeOffset now) =>

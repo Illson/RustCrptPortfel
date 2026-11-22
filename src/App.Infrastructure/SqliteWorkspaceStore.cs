@@ -92,6 +92,42 @@ internal sealed class FeedVersionRow
 
 public sealed class SqliteWorkspaceStore(PortfelDb db) : IWorkspaceStore
 {
+    internal const string ActiveJobs = "json_extract(data, '$.status') IN ('queued','running','retry_wait')";
+
+    public async Task<Job?> ClaimAsync(string ownerId, TimeProvider clock, CancellationToken ct)
+    {
+        async Task<Job[]> ReadActive()
+        {
+            var rows = await db.Database.SqlQueryRaw<string>(
+                "SELECT data AS Value FROM jobs WHERE owner_id = {0} AND " + ActiveJobs + " ORDER BY queue_order", ownerId).ToListAsync(ct);
+            return rows.Select(WorkspaceJson.Decode<Job>).ToArray();
+        }
+
+        if (WorkspaceJobs.ClaimCandidate(await ReadActive(), clock.GetUtcNow()) is null) return null;
+        // Another worker may have claimed/cancelled the job since the read-only probe.
+        await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+        var active = await ReadActive();
+        var now = clock.GetUtcNow();
+        var job = WorkspaceJobs.ClaimCandidate(active, now);
+        if (job is null) return null;
+        bool dispatched = false;
+        if (job.Status == JobStatus.Running)
+        {
+            string data = await db.Workspaces.Where(row => row.OwnerId == ownerId).Select(row => row.Data).SingleAsync(ct);
+            var root = WorkspaceJson.Decode<Workspace>(data);
+            dispatched = root.AiExecutions?.Any(item => item.JobId == job.Id) == true;
+            if (dispatched)
+            {
+                string updated = EncodeRoot(WorkspaceJobs.MarkUnsettled(root, job.Id));
+                await db.Database.ExecuteSqlAsync($"UPDATE workspaces SET data = {updated} WHERE owner_id = {ownerId}", ct);
+            }
+        }
+        var next = WorkspaceJobs.ClaimTransition(job, now, dispatched);
+        await db.Database.ExecuteSqlAsync($"UPDATE jobs SET data = {WorkspaceJson.Encode(next)} WHERE owner_id = {ownerId} AND id = {job.Id.ToString("D")}", ct);
+        await transaction.CommitAsync(ct);
+        return next.Status == JobStatus.Running ? next : null;
+    }
+
     public async Task<Workspace> ReadAsync(string ownerId, CancellationToken cancellationToken)
     {
         // One SQLite read snapshot: the feed must never come from a different commit than the job or portfolio.
@@ -215,6 +251,8 @@ internal sealed class DatabaseStartup(IServiceScopeFactory scopes) : IHostedServ
         // EF uses the existing transaction instead of its persistent SQLite migration lock row.
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
         await db.Database.MigrateAsync(cancellationToken);
+        await db.Database.ExecuteSqlRawAsync("CREATE INDEX IF NOT EXISTS ix_jobs_active_poll ON jobs(owner_id, queue_order) WHERE "
+            + SqliteWorkspaceStore.ActiveJobs, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }
 

@@ -51,16 +51,23 @@ public static class PublicSourceRevisions
             rows.Add(sample with { Revision = revision, Id = PortfelJson.Hash(new { key, revision }), ConfirmedAt = null });
         }
 
-        Market[] markets = batch.Status == "ok" && batch.Markets.Length == 0 && sourceId == "coingecko"
-            ? asset.Markets.Where(item => item.SourceId != sourceId).ToArray()
-            : batch.Markets.Length == 0 ? asset.Markets
-            : (batch.Status == "ok" ? asset.Markets.Where(item => item.SourceId != sourceId) : asset.Markets)
-                .Concat(batch.Markets).DistinctBy(item => (item.SourceId, item.Id)).ToArray();
+        var markets = asset.Markets;
+        var coverage = asset.MarketCoverage;
+        if ((batch.Markets.Length > 0 || sourceId == "coingecko")
+            && coverage?.Any(item => item.SourceId == sourceId && item.CheckedAt > batch.FetchedAt) != true)
+        {
+            bool complete = batch.Status == "ok";
+            // A new batch can correct volume/depth without changing the last trade timestamp or ID.
+            var retained = complete ? markets.Where(item => item.SourceId != sourceId) : markets;
+            markets = batch.Markets.Concat(retained).DistinctBy(item => (item.SourceId, item.Id)).ToArray();
+            coverage = [.. (coverage ?? []).Where(item => item.SourceId != sourceId), new(sourceId, batch.FetchedAt, complete)];
+        }
         return asset with
         {
             Observations = rows.ToArray(),
             SourceRecords = (asset.SourceRecords ?? []).Concat(batch.Records).DistinctBy(item => item.Id).ToArray(),
             Markets = markets,
+            MarketCoverage = coverage,
             MaximumSupplyKind = batch.MaximumSupplyKind ?? asset.MaximumSupplyKind,
         };
     }

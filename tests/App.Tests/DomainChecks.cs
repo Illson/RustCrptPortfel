@@ -19,6 +19,11 @@ internal static class DomainChecks
         Require(state.LatestCheck?.Status == "incomplete_snapshot" && state.Current!.Positions.Length == 2, "Second-page failure preserves first good snapshot");
         var adjusted = state.RecordSync(fetch with { FetchedAt = now.AddMinutes(7), Positions = [a with { Quantity = ExactNumber.From(8) }] });
         Require(adjusted.Snapshots.Length == 2 && adjusted.Current!.Positions.Single().Quantity == ExactNumber.From(8), "Full change and removal");
+        var future = adjusted.RecordSync(fetch with { FetchedAt = now.AddMinutes(8), SourceAsOf = now.AddDays(1) });
+        var recovered = future.RecordSync(fetch with { FetchedAt = now.AddMinutes(9), SourceAsOf = now.AddMinutes(9) });
+        Require(future.LatestCheck?.Status == "invalid_snapshot" && future.Current == adjusted.Current
+            && recovered.LatestCheck?.Status == "ok" && recovered.Current?.Positions.Length == 2,
+            "Future source time cannot poison the next valid sync");
         var positions = Enumerable.Range(0, 52).Select(i => new Position(i.ToString(), ExactNumber.From(1), "Synthetic", "SAME", i < 50)).ToArray();
         var mixed = Workspace.Empty.RecordSync(fetch with { Positions = positions });
         Require(PortfolioQueries.Portfolio(mixed, now, false).Positions.Count(row => row.QualityStatus == Quality.NotApplicable) == 2,
@@ -69,6 +74,12 @@ internal static class DomainChecks
         Require(Metrics.Supply([issuance with { EndsAt = issuance.StartsAt.AddDays(-1) }], assetId, now, 30, circulation, now.AddDays(30), now).QualityStatus == Quality.Error,
             "Invalid schedule must not be treated as an empty complete window");
         SupplyWindow Grants(params SupplyEvent[] events) => Metrics.Supply(events, assetId, now, 30, circulation, now.AddDays(30), now);
+        var sibling = unlock with { Id = "sibling" };
+        Require(Grants(unlock, sibling) is { QualityStatus: Quality.Ok } both
+            && both.Unlocks == ExactNumber.From(40) && both.GrossSupplyPressurePct == ExactNumber.From(4),
+            "Different installment IDs in the same allocation must both count");
+        Require(Grants(sibling, unlock, unlock with { SourceId = "other" }).QualityStatus == Quality.Conflict,
+            "Inconsistent cross-source multiplicity is not a precise total");
         var moved = unlock with { StartsAt = now.AddDays(20), ScheduleVersion = "v10" };
         var originalGrant = unlock with { StartsAt = now.AddDays(10), ScheduleVersion = "v2" };
         Require(Grants(moved, originalGrant).Unlocks == unlock.QuantityTotal &&
@@ -88,6 +99,25 @@ internal static class DomainChecks
         Require(Metrics.Markets([market], assetId, now.AddHours(2), ["venue"]).QualityStatus == Quality.Stale, "Stale is not a delisting");
         var demo = DemoPortfolio.Sync(Workspace.Empty, now);
         var sol = demo.Assets.Single(asset => asset.Asset.Id == "5426");
+        var badCirculation = sol with { Observations = sol.Observations.Select(row => row.MetricKey == "circulating_supply"
+            ? row with { QualityStatus = Quality.Error } : row).ToArray() };
+        Require(PortfolioQueries.Supply(badCirculation, now).Windows.All(w => w is
+            { QualityStatus: Quality.Error, NewIssuance: not null, GrossSupplyPressurePct: null, NewIssuancePct: null, UnlocksPct: null }),
+            "An erroneous positive denominator never produces percentages");
+        var cex = market with { BaseAssetId = sol.Asset.Id, SourceId = "coingecko", ReportedVolumeUsd = ExactNumber.From(10) };
+        var marketData = sol with { Markets = [] };
+        SourceBatch MarketBatch(int minutes, string status, params Market[] rows) => new(status, now.AddMinutes(minutes), [], [], rows);
+        marketData = PublicSourceRevisions.Merge(marketData, MarketBatch(0, "partial", cex), cex.SourceId);
+        var correctionBatch = MarketBatch(5, "partial", cex with { ReportedVolumeUsd = ExactNumber.From(100) });
+        marketData = PublicSourceRevisions.Merge(marketData, correctionBatch, cex.SourceId);
+        marketData = PublicSourceRevisions.Merge(marketData, MarketBatch(2, "ok", cex), cex.SourceId);
+        marketData = JsonSerializer.Deserialize<AssetData>(JsonSerializer.Serialize(marketData, PortfelJson.Options), PortfelJson.Options)!;
+        Require(PortfolioQueries.Markets(marketData, now.AddMinutes(5), []) is { QualityStatus: Quality.Partial, TopVenueShare: null } ms
+            && ms.ActivePairs.Length == 1 && ms.ObservedVolume == ExactNumber.From(100) && ms.Distribution.Single().SharePct is null,
+            "Partial market correction survives reload and out-of-order batches without claiming complete distribution");
+        var allMarkets = PublicSourceRevisions.Merge(marketData, MarketBatch(6, "ok", cex), cex.SourceId);
+        Require(PortfolioQueries.Markets(allMarkets, now.AddMinutes(6), []) is { QualityStatus: Quality.Ok, TopVenueShare: not null },
+            "A complete refresh restores market coverage");
         var staleDays = sol with { Observations = sol.Observations.Select(row => row.MetricKey == "chain_revenue"
             && row.PeriodStart.Month == beginning.Month ? row with { QualityStatus = Quality.Stale } : row).ToArray() };
         var staleMonth = PortfolioQueries.Economy(staleDays, now).Single(row => row.MetricKey == "chain_revenue")
@@ -110,6 +140,10 @@ internal static class DomainChecks
         var postponed = ProjectEvents.Register(canonical, official.SourceId, "fixture-upgrade", sol.Events[1], [official]);
         Require(postponed.Events.Length == 2 && PortfolioQueries.CurrentEvents(postponed.Events).Single().Status == "postponed",
             "Event revision preserves the previous deadline");
+        var replay = ProjectEvents.Register(postponed, official.SourceId, "fixture-upgrade", notice, [official]);
+        Require(ReferenceEquals(replay, postponed), "Replaying an older primary notice cannot undo a postponement");
+        Reject<AppFault>(() => ProjectEvents.Register(postponed, official.SourceId, "fixture-upgrade",
+            notice with { AnnouncedAt = sol.Events[1].AnnouncedAt }, [official]), "Conflicting notices with equal timestamps cannot silently win");
         var (snapshot, result) = DemoPortfolio.Analyze(demo, "5426", now);
         Require(AnalysisValidation.Parse(JsonSerializer.Serialize(result, PortfelJson.Options)).Headline == result.Headline, "Result JSON Schema");
         _ = AnalysisSchemas.SynthesisInput(snapshot);

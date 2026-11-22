@@ -78,7 +78,7 @@ internal static class ApiEndpoints
         owner.MapGet("/assets/{id}/markets", async (string id, HttpContext http, IWorkspaceStore store, TimeProvider clock, CancellationToken ct) =>
         {
             Workspace state = await Read(store, http, ct);
-            return Metrics.Markets(Asset(state, id).Markets, id, clock.GetUtcNow(), state.Settings.MajorExchangeIds);
+            return PortfolioQueries.Markets(Asset(state, id), clock.GetUtcNow(), state.Settings.MajorExchangeIds);
         });
         owner.MapGet("/assets/{id}/events", async (string id, HttpContext http, IWorkspaceStore store, CancellationToken ct) =>
             Asset(await Read(store, http, ct), id).Events.OrderByDescending(item => item.Version));

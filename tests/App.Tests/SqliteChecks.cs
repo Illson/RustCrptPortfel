@@ -120,12 +120,18 @@ internal static class SqliteChecks
 
             var receipts = await Task.WhenAll(Enumerable.Range(0, 5).Select(_ => QueueAsync()));
             Require(receipts.Select(row => row.JobId).Distinct().Count() == 1, "SQLite concurrent callers get one job");
+            var leases = await Task.WhenAll(Enumerable.Range(0, 4).Select(async _ =>
+            {
+                await Task.Yield();
+                await using var db = new PortfelDb(options);
+                return await new SqliteWorkspaceStore(db).ClaimAsync(other, new FixedClock(now), default);
+            }));
+            var sync = leases.Single(job => job is not null)!;
             await using (var db = new PortfelDb(options))
             {
                 var store = new SqliteWorkspaceStore(db);
                 var jobs = new WorkspaceJobs(store, new FixedClock(now));
-                var sync = await jobs.ClaimAsync(other, default);
-                Require(sync?.Id == receipts[0].JobId && await jobs.ExecuteDemoAsync(other, sync, default), "Executes the shared queued sync");
+                Require(sync.Id == receipts[0].JobId && await jobs.ExecuteDemoAsync(other, sync, default), "Only one worker claims the queued sync");
                 var run = await jobs.ClaimAsync(other, default) ?? throw new InvalidOperationException("Expected analysis job");
                 await db.Database.ExecuteSqlRawAsync("""
                     CREATE TRIGGER fail_test_publication BEFORE INSERT ON feed_versions
@@ -212,6 +218,18 @@ internal static class SqliteChecks
                 var store = scope.ServiceProvider.GetRequiredService<IWorkspaceStore>();
                 Require(await store.ReadyAsync(default) && (await store.ReadAsync(owner, default)).Jobs.Single().Id == job.Id,
                     "Concurrent startup retries the migration once despite the legacy lock row");
+                var jobs = scope.ServiceProvider.GetRequiredService<WorkspaceJobs>();
+                Job? first = await jobs.ClaimAsync(owner, default);
+                Require(first?.Id == job.Id, "Claims a migrated queue entry");
+                await jobs.CancelAsync(owner, job.Id, default);
+                // A transaction in another process holds the writer lock. Idle polling needs only a WAL read.
+                await using var blocker = new PortfelDb(options);
+                await using var held = await blocker.Database.BeginTransactionAsync();
+                var timed = new DbContextOptionsBuilder<PortfelDb>().UseSqlite(
+                    new SqliteConnectionStringBuilder(connection.ToString()) { DefaultTimeout = 1 }.ToString()).Options;
+                await using var reader = new PortfelDb(timed);
+                Require(await new SqliteWorkspaceStore(reader).ClaimAsync(owner, TimeProvider.System, default) is null,
+                    "Idle queue polling succeeds while another SQLite writer holds the lock");
             }
             await Task.WhenAll(api.StopAsync(timeout.Token), worker.StopAsync(timeout.Token));
             Console.WriteLine("PASS SQLite startup recovery after a failed migration and concurrent restart");

@@ -1,6 +1,6 @@
 import { FilterIcon } from 'lucide-react'
 import { type FormEvent, useState } from 'react'
-import { blockNames, date, decimal, request, useLoad, useRefreshWhileUpdating, type Evidence, type FeedItem, type FeedPage, type Portfolio } from '@/lib/api'
+import { blockNames, date, decimal, request, useLoad, useRefreshWhileUpdating, type Evidence, type FeedItem, type FeedPage } from '@/lib/api'
 import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger, Input } from './ui/primitives'
 import { Empty, ExternalLink, Loaded, Picker, Status, Warning } from './shared'
 
@@ -98,7 +98,6 @@ export function Feed({ timezone }: { timezone: string }) {
   const [to, setTo] = useState('')
   const [revision, setRevision] = useState(0)
   const [page, setPage] = useState<{ filter: string; cursor: string | null }>({ filter: '', cursor: null })
-  const positions = useLoad<Portfolio>('/portfolio')
   const filter = new URLSearchParams(Object.entries({ asset, read, type, importance, from, to }).filter(([, value]) => value && value !== 'any')).toString()
   const cursor = page.filter === filter ? page.cursor : null
   const items = useLoad<FeedPage>(`/feed?${filter}${cursor ? `&cursor=${cursor}` : ''}`, revision, 'v2')
@@ -106,7 +105,7 @@ export function Feed({ timezone }: { timezone: string }) {
   const refresh = () => setRevision(value => value + 1)
   return <div className="grid gap-6"><div><h1 className="text-3xl font-semibold tracking-tight">Лента</h1><p className="mt-1 text-sm text-muted-foreground">Публикации по активам портфеля.</p></div>
     <Card><CardHeader><CardTitle className="flex items-center gap-2"><FilterIcon className="size-4" />Фильтры</CardTitle></CardHeader><CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-      <Picker label="Актив" value={asset} setValue={setAsset} options={[["any", "Все активы"], ...(positions.data?.positions.map(position => [position.asset_id, position.symbol] as [string, string]) ?? [])]} />
+      <Picker label="Актив" value={asset} setValue={setAsset} options={[["any", "Все активы"], ...(items.data?.assets.map(option => [option.asset_id, option.symbol] as [string, string]) ?? [])]} />
       <Picker label="Категория" value={type} setValue={setType} options={[["any", "Все категории"], ["daily_analysis", "Ежедневный анализ"], ["event_analysis", "Анализ события"]]} />
       <Picker label="Важность" value={importance} setValue={setImportance} options={[["any", "Любая"], ["info", "Информация"], ["watch", "Наблюдение"], ["important", "Важная"], ["critical", "Критическая"]]} />
       <Picker label="Прочитанность" value={read} setValue={setRead} options={[["any", "Все"], ["false", "Новые"], ["true", "Прочитанные"]]} />
