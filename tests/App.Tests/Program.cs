@@ -1,5 +1,7 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Portfel.Application;
 using Portfel.Domain;
 using Portfel.Infrastructure;
@@ -16,7 +18,7 @@ try
     await using (var db = new PortfelDb(options))
     {
         SqliteChecks.VerifyMigrationModel(db);
-        await db.Database.MigrateAsync();
+        await db.GetService<IMigrator>().MigrateAsync("20261122000300_PersistentQueue");
         var store = new SqliteWorkspaceStore(db);
         await store.UpdateAsync(owner, state => (DemoPortfolio.Sync(state, now), true), default);
         var jobs = new WorkspaceJobs(store, new FixedClock(now));
@@ -25,6 +27,7 @@ try
 
     await using (var db = new PortfelDb(options))
     {
+        await db.Database.MigrateAsync();
         var store = new SqliteWorkspaceStore(db);
         var jobs = new WorkspaceJobs(store, new FixedClock(now));
         Check((await jobs.QueueAsync(owner, JobKind.PortfolioSync, null, "test-key", true, default)).JobId == jobId, "Restart retains idempotency");
@@ -81,6 +84,8 @@ try
     Console.WriteLine("PASS SQLite migration, restart, idempotency, precision, isolation, cancellation, rollback and metrics");
     DomainChecks.Run(now);
     await ProviderChecks.RunAsync(now);
+    await CoinGeckoMarketChecks.RunAsync(now);
+    await CoinMarketCapHistoryChecks.RunAsync(() => new PortfelDb(options), now);
     await VerifiedJobChecks.RunAsync(options, now);
     await SqliteChecks.RunAsync(now);
 }

@@ -21,9 +21,8 @@ for (const width of [390, 1440]) {
     const errors: string[] = []
     page.on('pageerror', error => errors.push(error.message))
     await page.goto('/')
-    await expect(page.getByRole('button', { name: 'Войти через CoinMarketCap' })).toBeDisabled()
-    await expect(page.getByText('BLOCKED_CMC_AUTH', { exact: true })).toBeVisible()
-    await expect(page.getByText('BLOCKED_CMC_ACCESS', { exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Портфели', exact: true })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Открыть свои портфели' })).toBeVisible()
     await page.getByRole('button', { name: 'Открыть демо-портфель' }).click()
     await expect(page.getByRole('heading', { name: 'Портфель', exact: true })).toBeVisible()
     await expect(page.getByRole('link', { name: 'Solana SOL' })).toBeVisible({ timeout: 15_000 })

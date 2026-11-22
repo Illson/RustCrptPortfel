@@ -168,6 +168,109 @@
         }
       }
     },
+    "/public/market/coins": {
+      "get": {
+        "summary": "Каталог CoinGecko (Development)",
+        "description": "Не принимает параметры портфеля.",
+        "responses": {
+          "200": {
+            "description": "Каталог с публичными идентификаторами.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["id", "name", "symbol"],
+                    "properties": {
+                      "id": { "type": "string" },
+                      "name": { "type": "string" },
+                      "symbol": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": { "description": "Вне Development." },
+          "429": { "description": "Лимит запросов." },
+          "502": { "description": "Данные CoinGecko недоступны." }
+        }
+      }
+    },
+    "/public/market/quotes": {
+      "get": {
+        "summary": "Публичные цены CoinGecko в USD (Development)",
+        "parameters": [
+          { "name": "ids", "in": "query", "required": true, "schema": { "type": "string", "maxLength": 5000 }, "description": "До 100 уникальных CoinGecko ID через запятую." }
+        ],
+        "responses": {
+          "200": {
+            "description": "Котировки по найденным активам; цена передаётся точной десятичной строкой. Допускается опережение серверных часов до 60 секунд включительно, исходное время сохраняется. Активы без корректной цены или времени пропускаются.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["id", "usd", "as_of"],
+                    "properties": {
+                      "id": { "type": "string" },
+                      "usd": { "type": "string" },
+                      "as_of": { "type": "string", "format": "date-time" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "Недопустимые идентификаторы." },
+          "404": { "description": "Вне Development." },
+          "429": { "description": "Лимит запросов." },
+          "502": { "description": "Данные CoinGecko недоступны." }
+        }
+      }
+    },
+    "/internal/market/coinmarketcap/charts/{slug}": {
+      "get": {
+        "summary": "Кэш недельной истории CoinMarketCap в USD",
+        "description": "Для сессии рабочей области в Development. Первый вызов разрешает slug в cryptocurrencyId; следующий после общей паузы может загрузить историю. На каждый внешний GET действует общая пауза 30 секунд, на график одной монеты — час.",
+        "security": [{ "Session": [] }],
+        "parameters": [
+          { "name": "slug", "in": "path", "required": true, "schema": { "type": "string", "minLength": 1, "maxLength": 120, "pattern": "^[a-z0-9]+(?:-+[a-z0-9]+)*$" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Свежая, кэшированная или предыдущая история. Точки находятся в chart.data.points.",
+            "headers": {
+              "X-Chart-Cache": { "schema": { "type": "string", "enum": ["refreshed", "hit", "stale"] } },
+              "X-Chart-Fetched-At": { "schema": { "type": "string", "format": "date-time" } },
+              "X-Chart-Next-Attempt-At": { "schema": { "type": "string", "format": "date-time" } }
+            }
+          },
+          "202": { "description": "ID сохранён. Повторить не раньше Retry-After.", "headers": { "Retry-After": { "schema": { "type": "integer" } } } },
+          "400": { "description": "Некорректный slug." },
+          "401": { "description": "Требуется сессия рабочей области." },
+          "403": { "description": "Нет доступа к рабочей области." },
+          "404": { "description": "Монета не найдена либо маршрут не включён." },
+          "429": { "description": "Истории в кэше нет, внешний запрос ограничен.", "headers": { "Retry-After": { "schema": { "type": "integer" } } } },
+          "502": { "description": "Истории в кэше нет, источник недоступен или вернул неожиданные данные." }
+        }
+      }
+    },
+    "/internal/market/coinmarketcap/monitor": {
+      "get": {
+        "summary": "Мониторинг запросов CoinMarketCap",
+        "description": "Только чтение БД в Development: состояния монет, общая пауза и последние 100 внешних попыток. Просмотр не расходует лимит источника.",
+        "security": [{ "Session": [] }],
+        "responses": {
+          "200": { "description": "Снимок мониторинга: as_of, global_next_attempt_at, coins, requests." },
+          "401": { "description": "Требуется сессия рабочей области." },
+          "403": { "description": "Нет доступа к рабочей области." },
+          "404": { "description": "Маршрут не включён." }
+        }
+      }
+    },
     "/portfolio": {
       "get": {
         "summary": "Портфель",

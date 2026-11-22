@@ -20,6 +20,17 @@ builder.Services.Configure<JsonOptions>(options =>
 builder.Services.Configure<RouteHandlerOptions>(options => options.ThrowOnBadRequest = true);
 
 bool local = builder.Environment.IsDevelopment();
+if (local)
+{
+    builder.Logging.AddSimpleConsole(options => { options.SingleLine = true; options.TimestampFormat = "HH:mm:ss "; });
+    builder.Services.AddSingleton(services => new CoinGeckoMarket(ProviderHttp.Create(), services.GetRequiredService<TimeProvider>(),
+        services.GetRequiredService<ILogger<CoinGeckoMarket>>()));
+    builder.Services.AddKeyedSingleton("coinmarketcap", (_, _) => CoinMarketCapHistory.CreateHttpClient());
+    builder.Services.AddScoped(services => new CoinMarketCapHistory(
+        services.GetRequiredService<PortfelDb>(),
+        services.GetRequiredKeyedService<HttpClient>("coinmarketcap"), services.GetRequiredService<TimeProvider>(),
+        services.GetRequiredService<ILogger<CoinMarketCapHistory>>()));
+}
 var protection = builder.Services.AddDataProtection().SetApplicationName($"dotnetCrptPortfel:{builder.Environment.EnvironmentName}");
 if (builder.Configuration["Security:KeyDirectory"] is { Length: > 0 } keyDirectory)
     protection.PersistKeysToFileSystem(Directory.CreateDirectory(keyDirectory));

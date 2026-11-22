@@ -6,4 +6,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../Shared/CoinMarketCapChart.cs" Link="CoinMarketCapChart.cs" />
+    <InternalsVisibleTo Include="DotnetCrptPortfel.Tests" />
+  </ItemGroup>
 </Project>

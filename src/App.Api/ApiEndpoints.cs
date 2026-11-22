@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Http.Features;
 using Portfel.Application;
 using Portfel.Domain;
+using Portfel.Infrastructure;
 
 namespace Portfel.Api;
 
@@ -25,6 +26,12 @@ internal static class ApiEndpoints
         api.MapMethods("/auth/cmc/callback", ["GET", "POST"], () => CmcAuth());
         api.MapPost("/auth/demo", DemoLogin);
         api.MapGet("/public/integrations", (DemoSettings demo) => Integrations.Get(demo.Enabled));
+        if (app.Environment.IsDevelopment())
+        {
+            api.MapGet("/public/market/coins", (CoinGeckoMarket market, CancellationToken ct) => market.CoinsAsync(ct));
+            api.MapGet("/public/market/quotes", (string? ids, CoinGeckoMarket market, CancellationToken ct) =>
+                market.QuotesAsync(ids is { Length: > 0 and <= CoinGeckoMarket.MaxQueryLength } ? ids.Split(',') : [], ct));
+        }
         api.MapGet("/health/live", () => Results.Ok(new { status = "live" }));
         api.MapGet("/health/ready", Ready);
         app.MapGet("/health/live", () => Results.Ok(new { status = "live" }));
@@ -39,6 +46,12 @@ internal static class ApiEndpoints
                 await http.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(http);
             return await next(context);
         });
+        if (app.Environment.IsDevelopment())
+        {
+            var cmc = owner.MapGroup("/internal/market/coinmarketcap");
+            cmc.MapGet("/charts/{slug}", ReadCmcChart);
+            cmc.MapGet("/monitor", (CoinMarketCapHistory history, CancellationToken ct) => history.MonitorAsync(ct));
+        }
 
         owner.MapPost("/auth/logout", async (HttpContext http) =>
         {
@@ -201,6 +214,33 @@ internal static class ApiEndpoints
             return (state with { FeedReports = [.. reports, new(Guid.NewGuid(), id, reason, clock.GetUtcNow())] }, true);
         }, ct);
         return Results.NoContent();
+    }
+
+    private static async Task<IResult> ReadCmcChart(string slug, HttpContext http, CoinMarketCapHistory history, TimeProvider clock,
+        CancellationToken ct)
+    {
+        CmcChartResult result = await history.ChartAsync(slug, ct);
+        if (result.NextAttemptAt is { } next)
+        {
+            http.Response.Headers["X-Chart-Next-Attempt-At"] = next.ToString("O", CultureInfo.InvariantCulture);
+            if (result.Status is 202 or 429)
+                http.Response.Headers.RetryAfter = Math.Max(1, Math.Ceiling((next - clock.GetUtcNow()).TotalSeconds))
+                    .ToString(CultureInfo.InvariantCulture);
+        }
+        if (result.Json is { } json)
+        {
+            http.Response.Headers["X-Chart-Cache"] = result.State;
+            http.Response.Headers["X-Chart-Fetched-At"] = result.FetchedAt!.Value.ToString("O", CultureInfo.InvariantCulture);
+            return Results.Text(json, "application/json");
+        }
+
+        return result.State switch
+        {
+            "platform_cached" => Results.Json(new { status = result.State, next_attempt_at = result.NextAttemptAt }, statusCode: 202),
+            "rate_limited" => throw new AppFault("cmc_rate_limited", "Лимит CoinMarketCap. Проверьте время следующей попытки в мониторинге.", 429),
+            "coin_not_found" => throw new AppFault("cmc_coin_not_found", "Монета не найдена на CoinMarketCap.", 404),
+            _ => throw new AppFault("cmc_provider_error", "Не удалось получить данные CoinMarketCap.", 502),
+        };
     }
 
     private static Task<Workspace> Read(IWorkspaceStore store, HttpContext http, CancellationToken ct) => store.ReadAsync(Owner(http), ct);

@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
+    <Compile Include="../Shared/CoinMarketCapChart.cs" Link="CoinMarketCapChart.cs" />
     <ProjectReference Include="../App.Application/App.Application.csproj" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="[11.0.0]" />
   </ItemGroup>
