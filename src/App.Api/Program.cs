@@ -66,6 +66,7 @@ builder.Services.AddAntiforgery(options =>
     options.Cookie.SameSite = SameSiteMode.Strict;
     options.Cookie.SecurePolicy = local ? CookieSecurePolicy.SameAsRequest : CookieSecurePolicy.Always;
 });
+builder.AddChatGptLab();
 
 WebApplication app = builder.Build();
 app.Use(async (http, next) =>
@@ -103,4 +104,5 @@ if (!string.IsNullOrWhiteSpace(frontend) && Directory.Exists(frontend))
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapPortfelApi();
+app.MapChatGptLab();
 await app.RunAsync();

@@ -22,6 +22,8 @@
 
 В демо раздел **Мониторинг запросов** показывает кэш истории CoinMarketCap и журнал внешних попыток. Просмотр страниц не расходует лимит. [Контракт и лимиты](docs/coinmarketcap-history.md). В окне `local.cmd` видны начало, результат, кэш и лимиты обращений API к источникам; тела ответов и данные портфеля не выводятся. Файлы логов остаются в `.portfel/local/`.
 
+**Тест ChatGPT:** `.\local.cmd -ChatGptLab` открывает [локальную страницу](http://127.0.0.1:5080/chatgpt-lab). После входа через OAuth можно проверить до 40 выбранных монет на подписке ChatGPT без API-ключа. Сводка показывает **Продаём / Удерживаем / Докупаем / Нет сигнала**, причину и условие пересмотра. Продажа и докупка требуют повторного веб-поиска. Остатки остаются в браузере; там же хранится журнал сравнения с удержанием через 30/90 дней. [Режим и проверки](docs/chatgpt-lab.md).
+
 ### Docker Compose
 
 ```powershell
@@ -67,7 +69,7 @@ Compose публикует только frontend на `127.0.0.1`. Для вне
 
 - `BLOCKED_CMC_AUTH` — официальный контракт входа для приложения не подтверждён. `BLOCKED_CMC_ACCESS` — разрешённое чтение личного портфеля не подтверждено. Подтверждение и тесты с реальным портфелем остаются отдельными задачами. [CMC API](https://coinmarketcap.com/api/documentation/guides/authentication/) · [CMC MCP](https://coinmarketcap.com/api/mcp/)
 - Работают учебная синхронизация, портфель, экран актива, четыре блока данных, календарь, лента, версии и замечания к карточкам, постановка и отмена заданий, настройки расписания. Демо не запускает платный AI и не использует реальные позиции.
-- Реализованы и проверены на синтетических HTTP-ответах адаптеры CMC Market Data, DefiLlama Free, CoinGecko Pro, OpenAI Responses, Anthropic Messages, OpenAI-compatible и HTTP/SSE inference плана ChatGPT. Рабочая синхронизация, ввод AI-ключей и OAuth ChatGPT не включены. Детали и оставшиеся работы — в [ревью ТЗ](docs/review-tz-1.1.md).
+- Реализованы и проверены на синтетических HTTP-ответах адаптеры CMC Market Data, DefiLlama Free, CoinGecko Pro, OpenAI Responses, Anthropic Messages, OpenAI-compatible и HTTP/SSE inference плана ChatGPT. OAuth ChatGPT включается только в локальной Windows-лаборатории; рабочая синхронизация и ввод AI-ключей не включены. Детали и оставшиеся работы — в [ревью ТЗ](docs/review-tz-1.1.md).
 - Интерфейс использует нейтральный preset `nova` с Radix, созданный `shadcn@4.23.0 init --preset nova --base radix --template vite --no-monorepo`.
 - [API](src/App.Api), [worker](src/App.Worker), [расчёты и контракты](src/App.Domain), [сценарии и учебный набор](src/App.Application), [миграции и адаптеры](src/App.Infrastructure), [frontend](frontend).
 

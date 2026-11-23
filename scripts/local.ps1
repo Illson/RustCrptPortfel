@@ -2,7 +2,8 @@
 param(
     [ValidateSet('run', 'test', 'stop')][string]$Mode = 'run',
     [ValidateRange(1, 65535)][int]$Port,
-    [switch]$NoBrowser
+    [switch]$NoBrowser,
+    [switch]$ChatGptLab
 )
 
 $ErrorActionPreference = 'Stop'
@@ -64,6 +65,7 @@ $api = $worker = $lock = $signal = $null
 $apiLogs = @()
 $passed = $false
 $previousE2eUrl = $env:PORTFEL_E2E_URL
+$previousLabE2e = $env:PORTFEL_E2E_CHATGPT_LAB
 $previousPath = $env:Path
 Push-Location -LiteralPath $repo
 try {
@@ -103,11 +105,15 @@ try {
         }
     }
 
-    $api = Start-ServiceProcess 'App.Api' @(
-        "--urls=$origin"
+    $apiArgs = @(
         "--Frontend:Directory=$frontend"
         "--Security:KeyDirectory=$(Join-Path $data 'keys')"
     )
+    if ($ChatGptLab) {
+        $apiArgs += @('--ChatGptLab:Enabled=true', "--ChatGptLab:Port=$Port", "--ChatGptLab:Directory=$(Join-Path $data 'chatgpt-lab')")
+    }
+    else { $apiArgs += "--urls=$origin" }
+    $api = Start-ServiceProcess 'App.Api' $apiArgs
     if (-not $testing) {
         foreach ($file in 'App.Api.log', 'App.Api.err.log') {
             $stream = [IO.File]::Open((Join-Path $data $file), 'Open', 'Read', 'ReadWrite')
@@ -128,13 +134,14 @@ try {
     Assert-Running $worker 'App.Worker'
     if ($testing) {
         $env:PORTFEL_E2E_URL = $origin
+        if ($ChatGptLab) { $env:PORTFEL_E2E_CHATGPT_LAB = '1' }
         Invoke-Tool $pnpm @('--dir', 'frontend', 'test:e2e', '--output', (Join-Path $data 'playwright'))
         $passed = $true
     }
     else {
         Write-Host "Demo: $origin (run local.cmd stop in another terminal to stop)"
         if (-not $NoBrowser) {
-            try { Start-Process $origin }
+            try { Start-Process $(if ($ChatGptLab) { "$origin/chatgpt-lab" } else { $origin }) }
             catch { Write-Warning "Open $origin in your browser." }
         }
         do {
@@ -146,6 +153,7 @@ try {
 }
 finally {
     $env:PORTFEL_E2E_URL = $previousE2eUrl
+    $env:PORTFEL_E2E_CHATGPT_LAB = $previousLabE2e
     $env:Path = $previousPath
     foreach ($process in @($worker, $api)) {
         if ($process) {

@@ -84,6 +84,7 @@ try
     Console.WriteLine("PASS SQLite migration, restart, idempotency, precision, isolation, cancellation, rollback and metrics");
     DomainChecks.Run(now);
     await ProviderChecks.RunAsync(now);
+    await ChatGptLabChecks.RunAsync(now);
     await CoinGeckoMarketChecks.RunAsync(now);
     await CoinMarketCapHistoryChecks.RunAsync(() => new PortfelDb(options), now);
     await VerifiedJobChecks.RunAsync(options, now);

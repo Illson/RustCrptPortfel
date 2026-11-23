@@ -5,6 +5,7 @@ import { Badge, Button, Card, CardContent, CardDescription, CardHeader, Sidebar,
   SidebarContent, SidebarFooter, SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger,
   useSidebar } from '@/components/ui/primitives'
 import { AssetPage } from '@/components/asset'
+import { ChatGptLab, chatGptLabPath } from '@/components/chatgpt-lab'
 import { CsvPortfolios, csvPortfoliosPath } from '@/components/csv-portfolios'
 import { CmcMonitorPage, cmcMonitorPath, cmcRequestsPath } from '@/components/cmc-monitor'
 import { Feed } from '@/components/feed'
@@ -48,6 +49,7 @@ function Login({ state, onLogin }: { state: Session; onLogin: () => Promise<void
         <CardContent className="grid gap-4">
           <Button asChild className="w-full"><a href={csvPortfoliosPath}>Открыть свои портфели</a></Button>
           {state.demo_available && <Button className="w-full" variant="outline" onClick={() => void demo()} disabled={busy}>Открыть демо-портфель</Button>}
+          {state.demo_available && <Button asChild className="w-full" variant="outline"><a href={chatGptLabPath}>Тест ChatGPT</a></Button>}
           {error && <Warning title="Не удалось войти">{error}</Warning>}
         </CardContent>
       </Card>
@@ -100,6 +102,7 @@ function Workspace({ onLogout }: { onLogout: () => Promise<void> }) {
         </SidebarMenuButton></SidebarMenuItem>)}</SidebarMenu></nav></SidebarContent>
       <SidebarFooter className="border-t">
         <Button asChild variant="outline"><a href={csvPortfoliosPath}>Свои портфели из файлов</a></Button>
+        <Button asChild variant="outline"><a href={chatGptLabPath}>Тест ChatGPT</a></Button>
         <Button className="w-full justify-start" variant="ghost" onClick={() => void logout()}><LogOutIcon />Выйти</Button>
       </SidebarFooter>
     </Sidebar>
@@ -133,4 +136,5 @@ function App() {
   return state.authenticated ? <SidebarProvider><Workspace onLogout={refresh} /></SidebarProvider> : <Login state={state} onLogin={refresh} />
 }
 
-createRoot(document.getElementById('root')!).render(location.pathname === csvPortfoliosPath ? <CsvPortfolios /> : <App />)
+createRoot(document.getElementById('root')!).render(location.pathname === csvPortfoliosPath ? <CsvPortfolios />
+  : location.pathname === chatGptLabPath ? <ChatGptLab /> : <App />)
