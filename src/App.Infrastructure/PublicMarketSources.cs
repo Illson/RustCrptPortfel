@@ -8,9 +8,10 @@ namespace Portfel.Infrastructure;
 
 public static class ProviderHttp
 {
-    public static HttpClient Create() => new(new SocketsHttpHandler
+    public static HttpClient Create(bool useCookies = true) => new(new SocketsHttpHandler
     {
         AllowAutoRedirect = false,
+        UseCookies = useCookies,
         ConnectTimeout = TimeSpan.FromSeconds(8),
         PooledConnectionLifetime = TimeSpan.FromMinutes(10),
         AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.Brotli,

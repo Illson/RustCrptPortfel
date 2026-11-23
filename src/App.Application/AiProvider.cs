@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Portfel.Domain;
 
 namespace Portfel.Application;
@@ -6,12 +7,28 @@ namespace Portfel.Application;
 public sealed record AiCapabilities(bool WebSearch, bool StructuredOutput, bool Streaming, bool Usage,
     bool RemoteCancellation, string QuotaStatus, DateTimeOffset CheckedAt, bool JsonOutput = false,
     string? Model = null, string Version = "1.0");
-public sealed record AiRequest(string Model, string PublicOrPrivateInput, bool Research, JsonElement? OutputSchema, int TokenLimit);
+public sealed record AiRequest(string Model, string PublicOrPrivateInput, bool Research, JsonElement? OutputSchema, int TokenLimit,
+    string? Instructions = null, string OutputSchemaName = "analysis_result_v1", bool CaptureOutput = false,
+    string? ReasoningEffort = null, string? WebSearchContextSize = null, TimeSpan? Deadline = null);
 public sealed record AiToolUse(string Type, string ToolId, string[] Queries, AiSource[] Sources);
 public sealed record AiSource(string Url, string Title);
+public sealed record AiOutputPreview(string Text, bool Partial, bool Truncated);
 public sealed record AiReceipt(string Provider, string? RequestId, string Status, string? Failure,
     long? InputTokens, long? OutputTokens, string BillingMode, string? Text, AiToolUse[] Tools,
-    TimeSpan? Duration = null, DateTimeOffset? RetryAt = null, ExactNumber? CostUsd = null);
+    TimeSpan? Duration = null, DateTimeOffset? RetryAt = null, ExactNumber? CostUsd = null)
+{
+    // Provider metadata for the local opinion workflow, never written to usage receipts.
+    [JsonIgnore]
+    public AiSource[] WebSources { get; init; } = [];
+    [JsonIgnore]
+    public string[] OpenedWebUrls { get; init; } = [];
+    [JsonIgnore]
+    public int? UpstreamStatus { get; init; }
+    [JsonIgnore]
+    public AiOutputPreview? OutputPreview { get; init; }
+    [JsonIgnore]
+    public string? TerminalState { get; init; }
+}
 
 public interface IAiProvider
 {

@@ -15,7 +15,7 @@ internal sealed class BoundedReadStream(Stream source, int remaining) : Stream
     {
         int count = await source.ReadAsync(buffer[..Math.Min(remaining + 1, buffer.Length)], cancellationToken);
         remaining -= count;
-        if (remaining < 0) throw new System.Text.Json.JsonException("Response exceeds the allowed size.");
+        if (remaining < 0) throw new ResponseSizeLimitException();
         return count;
     }
 
@@ -28,3 +28,5 @@ internal sealed class BoundedReadStream(Stream source, int remaining) : Stream
     public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     public override ValueTask DisposeAsync() => source.DisposeAsync();
 }
+
+internal sealed class ResponseSizeLimitException() : System.Text.Json.JsonException("Response exceeds the allowed size.");

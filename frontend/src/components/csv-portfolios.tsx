@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { applyImports, maxBatchFiles, maxFileBytes, parseHoldingsCsv, readBook, saveBook, suggestTarget, suggestedName,
   summarizePortfolios, type ImportDraft, type Portfolio } from '@/lib/csv-portfolios'
 import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input } from './ui/primitives'
+import { chatGptLabPath } from './chatgpt-lab'
 import { PortfolioPrices } from './portfolio-prices'
 import { Warning } from './shared'
 
@@ -108,7 +109,10 @@ export function CsvPortfolios() {
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div><h1 className="text-3xl font-semibold tracking-tight">Мои портфели</h1>
         <p className="mt-1 text-sm text-muted-foreground">Остатки из файлов остаются в браузере. Рыночные котировки в USD — от CoinGecko.</p></div>
-      <Button asChild variant="outline"><a href="/">На главную</a></Button>
+      <div className="flex flex-wrap gap-2">
+        <Button asChild variant="outline"><a href={chatGptLabPath}>Тест ChatGPT</a></Button>
+        <Button asChild variant="outline"><a href="/">На главную</a></Button>
+      </div>
     </div>
     <Card className="min-w-0">
       <CardHeader><CardTitle>Импорт остатков</CardTitle>
